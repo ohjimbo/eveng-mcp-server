@@ -1,11 +1,12 @@
-# eveng-mcp-server pipeline — lint → test → build → deploy
+# eveng-mcp-server pipeline — test → build → deploy
 #
-# Runner: shell executor on the Unraid host (tag `unraid`) with docker CLI.
-# Lint/test run inside a python:3.12 container so the host needs no Python.
-# Code is baked into the image — no bind-mount overlay, nothing to preserve.
+# Runner: shell executor (containerized gitlab-runner with docker CLI to the
+# host daemon). The runner's checkout is NOT visible to the host daemon, so
+# bind mounts (-v $CI_PROJECT_DIR:...) silently mount an empty dir — lint and
+# tests therefore run inside `docker build` (the context is STREAMED to the
+# daemon) via the Dockerfile's `test` stage.
 
 stages:
-  - lint
   - test
   - build
   - deploy
@@ -14,25 +15,18 @@ variables:
   IMAGE_NAME: eveng-mcp
   CONTAINER_NAME: eveng-mcp
 
-lint:
-  stage: lint
-  tags: [unraid]
-  script:
-    - docker run --rm -v "$CI_PROJECT_DIR:/src" -w /src python:3.12-slim
-      sh -c "pip install -q ruff && ruff check ."
-
 test:
   stage: test
   tags: [unraid]
   script:
-    - docker run --rm -v "$CI_PROJECT_DIR:/src" -w /src python:3.12-slim
-      sh -c "pip install -q -e .[dev] && pytest -q"
+    # ruff + pytest run inside this build stage
+    - docker build --target test -t $IMAGE_NAME:test .
 
 build:
   stage: build
   tags: [unraid]
   script:
-    - docker build -t $IMAGE_NAME:latest -t $IMAGE_NAME:$CI_COMMIT_SHORT_SHA .
+    - docker build --target runtime -t $IMAGE_NAME:latest -t $IMAGE_NAME:$CI_COMMIT_SHORT_SHA .
   only:
     - main
 

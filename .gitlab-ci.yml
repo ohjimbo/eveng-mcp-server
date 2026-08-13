@@ -65,6 +65,8 @@ deploy:
     - echo "Deployed $IMAGE_NAME:$CI_COMMIT_SHORT_SHA"
     - sleep 5
     - docker logs --tail 30 $CONTAINER_NAME
-    - "curl -sf http://localhost:8090/health || (echo 'health check FAILED' && exit 1)"
+    # the runner is a container itself, so curl its own localhost would miss
+    # the host network — probe from inside the deployed container instead
+    - docker exec $CONTAINER_NAME python -c "import urllib.request; assert urllib.request.urlopen('http://localhost:8090/health', timeout=5).read() == b'ok'; print('health ok')"
   only:
     - main

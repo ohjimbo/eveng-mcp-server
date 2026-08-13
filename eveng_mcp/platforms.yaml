@@ -111,6 +111,14 @@ templates:
     interfaces: { naming: "ge-0/0/{n}", slot: "n+1", mgmt: fxp0 }
     boot_seconds: 300
     netbox_device_types: [SRX340, SRX1500, SRX4600]
+  vsrxng:
+    os: junos
+    interfaces: { naming: "ge-0/0/{n}", slot: "n+1", mgmt: fxp0 }
+    boot_seconds: 300
+  vjunosevo:
+    os: junos
+    interfaces: { naming: "et-0/0/{n}", slot: "n+1", mgmt: re0:mgmt-0 }
+    boot_seconds: 420
   vqfx:
     os: junos
     interfaces: { naming: "xe-0/0/{n}", slot: "n+1", mgmt: em0 }

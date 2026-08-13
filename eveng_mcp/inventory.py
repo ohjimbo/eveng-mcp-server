@@ -77,7 +77,11 @@ class PlatformMap:
             raw = _deep_merge(raw, user)
         self.defaults: dict = raw.get("defaults", {}) or {}
         self.os_families: dict = raw.get("os_families", {}) or {}
-        self.templates: dict = raw.get("templates", {}) or {}
+        # Template names are matched case-insensitively: EVE-NG installs often
+        # carry mixed-case custom template names ('vJunos-switch').
+        self.templates: dict = {
+            k.lower(): v for k, v in (raw.get("templates", {}) or {}).items()
+        }
         self.prefixes: dict = raw.get("prefixes", {}) or {}
         self._cache: dict[str, PlatformInfo | None] = {}
 
@@ -91,7 +95,7 @@ class PlatformMap:
         return info
 
     def _resolve(self, template: str) -> PlatformInfo | None:
-        tpl_entry = self.templates.get(template)
+        tpl_entry = self.templates.get(template.lower())
         os_name = None
         if tpl_entry is not None:
             os_name = tpl_entry.get("os")

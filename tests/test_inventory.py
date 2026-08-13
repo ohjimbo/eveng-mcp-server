@@ -22,6 +22,16 @@ def test_prefix_fallback(platforms: PlatformMap):
     assert info is not None and info.os_family == "junos"
 
 
+def test_case_insensitive_exact_match(platforms: PlatformMap):
+    """Real EVE-NG installs carry mixed-case template names ('vJunos-switch');
+    exact-match must not silently degrade to interface-less prefix matching."""
+    info = platforms.lookup("vJunos-switch")
+    assert info is not None
+    assert info.interfaces.get("naming") == "ge-0/0/{n}"
+    assert info.boot_seconds == 300
+    assert platforms.slot_for_interface("vJunos-switch", "ge-0/0/0") == 1
+
+
 def test_unmapped_returns_none(platforms: PlatformMap):
     assert platforms.lookup("custom-fw-9") is None
 

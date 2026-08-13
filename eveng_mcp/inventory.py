@@ -38,6 +38,7 @@ class PlatformInfo:
     console_block: dict = field(default_factory=dict)
     show_config: str | None = None
     halt: str | None = None
+    config_commit: str | None = None
     boot_seconds: int = 60
     interfaces: dict = field(default_factory=dict)
     netbox_platform: str | None = None
@@ -119,6 +120,7 @@ class PlatformMap:
             console_block=merged.get("console", {}) or {},
             show_config=merged.get("show_config"),
             halt=merged.get("halt"),
+            config_commit=merged.get("config_commit"),
             boot_seconds=int(
                 merged.get("boot_seconds", self.defaults.get("boot_seconds", 60))
             ),

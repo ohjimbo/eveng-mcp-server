@@ -136,6 +136,13 @@ def register(mcp, cfg: Config, client: EvengClient, platforms: PlatformMap) -> N
         dev = await _find_device(client, platforms, lab_path, node)
         platform = _require_tier1(dev)
         user, pwd = _creds(username, password)
+        info = platforms.lookup(dev["template"])
+        # Some platforms (junos) hold changes in a candidate config until an
+        # explicit commit — append it unless the caller already did.
+        if (info and info.config_commit
+                and not any(c.strip().startswith(info.config_commit)
+                            for c in configs)):
+            configs = [*configs, info.config_commit]
         return await driver_run(
             platform, dev["console"]["host"], dev["console"]["port"],
             configs=configs, username=user, password=pwd,

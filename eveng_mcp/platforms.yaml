@@ -25,6 +25,7 @@ os_families:
     scrapli: juniper_junos
     show_config: "show configuration | display set"
     halt: "request system halt"
+    config_commit: "commit"   # junos candidate config needs an explicit commit
     netbox_platform: junos
   eos:
     vendor: arista

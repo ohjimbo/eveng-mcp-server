@@ -23,8 +23,11 @@ async def test_build_happy_path(eveng_api, client, platforms):
         Response(201, json={"code": 201, "data": {"id": 1}}),
         Response(201, json={"code": 201, "data": {"id": 2}}),
     ]
-    eveng_api.post(f"{BASE}/labs/Build.unl/networks").mock(
+    net_post = eveng_api.post(f"{BASE}/labs/Build.unl/networks").mock(
         return_value=Response(201, json={"code": 201, "data": {"id": 7}})
+    )
+    net_hide = eveng_api.put(f"{BASE}/labs/Build.unl/networks/7").mock(
+        return_value=Response(201, json={"code": 201})
     )
     put_r1 = eveng_api.put(f"{BASE}/labs/Build.unl/nodes/1/interfaces").mock(
         return_value=Response(201, json={"code": 201})
@@ -35,6 +38,10 @@ async def test_build_happy_path(eveng_api, client, platforms):
 
     result = await build_topology(client, platforms, "/Build.unl", SPEC)
     assert result["success"] is True
+    # p2p bridge must be created VISIBLE (EVE-NG rejects connecting to hidden
+    # networks) and hidden only after both ends are connected
+    assert json.loads(net_post.calls[0].request.content)["visibility"] == 1
+    assert net_hide.called
     assert result["node_ids"] == {"R1": 1, "R2": 2}
     assert result["failed"] is None
     # ge-0/0/0 → slot 1 (junos offset); Ethernet1 → slot 1

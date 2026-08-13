@@ -195,17 +195,20 @@ async def build_topology(
                     raise EvengError(f"Node {item['name']!r}: no id in response {resp}")
                 node_ids[item["name"]] = nid
             elif kind == "link":
-                if "network" in item:
-                    net_id = net_ids[item["network"]]
-                else:
-                    # p2p: dedicated bridge, hidden from the canvas
+                p2p = "network" not in item
+                if p2p:
+                    # p2p bridge: EVE-NG REJECTS connections to hidden
+                    # (visibility=0) networks, so create visible, connect
+                    # both ends, then hide the dot best-effort.
                     bridge = f"{item['a_node']}-{item['b_node']}"
                     resp = await client.add_network(
-                        lab_path, bridge, "bridge", visibility=0
+                        lab_path, bridge, "bridge", visibility=1
                     )
                     net_id = _new_id(resp)
                     if net_id is None:
                         raise EvengError(f"Bridge {bridge!r}: no id in response {resp}")
+                else:
+                    net_id = net_ids[item["network"]]
                 await client.connect_interface(
                     lab_path, node_ids[item["a_node"]], item["a_slot"], net_id
                 )
@@ -213,6 +216,11 @@ async def build_topology(
                     await client.connect_interface(
                         lab_path, node_ids[item["b_node"]], item["b_slot"], net_id
                     )
+                if p2p:
+                    try:
+                        await client.update_network(lab_path, net_id, {"visibility": 0})
+                    except EvengError:
+                        pass  # cosmetic only — the link itself is up
             done.append(label)
         except (EvengError, EvengApiError, KeyError) as e:
             # KeyError defends the fail-fast report against future spec-shape
@@ -344,12 +352,17 @@ def register(mcp, cfg: Config, client: EvengClient, platforms: PlatformMap) -> N
         b_id, b_obj = by_name[b_node]
         a_slot = platforms.slot_for_interface(a_obj.get("template", ""), a_iface)
         b_slot = platforms.slot_for_interface(b_obj.get("template", ""), b_iface)
-        resp = await client.add_network(lab_path, f"{a_node}-{b_node}", "bridge", visibility=0)
+        # visible-then-hide: EVE-NG rejects connections to hidden networks
+        resp = await client.add_network(lab_path, f"{a_node}-{b_node}", "bridge", visibility=1)
         net_id = _new_id(resp)
         if net_id is None:
             return {"error": f"Bridge creation returned no id: {resp}"}
         await client.connect_interface(lab_path, a_id, a_slot, net_id)
         await client.connect_interface(lab_path, b_id, b_slot, net_id)
+        try:
+            await client.update_network(lab_path, net_id, {"visibility": 0})
+        except EvengError:
+            pass
         return {
             "linked": f"{a_node}:{a_slot} <-> {b_node}:{b_slot}",
             "network_id": net_id,

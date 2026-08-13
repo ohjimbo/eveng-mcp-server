@@ -252,6 +252,11 @@ class EvengClient:
         }
         return await self.request("POST", f"/labs{_quote_lab(lab_path)}/networks", body)
 
+    async def update_network(self, lab_path: str, network_id: int, body: dict) -> Any:
+        return await self.request(
+            "PUT", f"/labs{_quote_lab(lab_path)}/networks/{network_id}", body
+        )
+
     async def delete_network(self, lab_path: str, network_id: int) -> Any:
         return await self.request(
             "DELETE", f"/labs{_quote_lab(lab_path)}/networks/{network_id}"

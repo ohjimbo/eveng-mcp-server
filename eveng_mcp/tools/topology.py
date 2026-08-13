@@ -6,6 +6,7 @@ integration can reuse it: NetBox → spec → build_topology.
 
 from __future__ import annotations
 
+import contextlib
 import re
 
 from eveng_mcp.client import EvengApiError, EvengClient, EvengError
@@ -217,10 +218,9 @@ async def build_topology(
                         lab_path, node_ids[item["b_node"]], item["b_slot"], net_id
                     )
                 if p2p:
-                    try:
+                    # cosmetic only — the link itself is up
+                    with contextlib.suppress(EvengError):
                         await client.update_network(lab_path, net_id, {"visibility": 0})
-                    except EvengError:
-                        pass  # cosmetic only — the link itself is up
             done.append(label)
         except (EvengError, EvengApiError, KeyError) as e:
             # KeyError defends the fail-fast report against future spec-shape
@@ -359,10 +359,8 @@ def register(mcp, cfg: Config, client: EvengClient, platforms: PlatformMap) -> N
             return {"error": f"Bridge creation returned no id: {resp}"}
         await client.connect_interface(lab_path, a_id, a_slot, net_id)
         await client.connect_interface(lab_path, b_id, b_slot, net_id)
-        try:
+        with contextlib.suppress(EvengError):
             await client.update_network(lab_path, net_id, {"visibility": 0})
-        except EvengError:
-            pass
         return {
             "linked": f"{a_node}:{a_slot} <-> {b_node}:{b_slot}",
             "network_id": net_id,

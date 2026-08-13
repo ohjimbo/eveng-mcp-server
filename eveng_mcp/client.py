@@ -205,12 +205,35 @@ class EvengClient:
         return await self.request("DELETE", f"/labs{_quote_lab(lab_path)}/nodes/{node_id}")
 
     async def node_action(self, lab_path: str, action: str, node_id: int | None = None) -> Any:
-        """start / stop / wipe — one node, or all nodes when node_id is None."""
+        """start / stop / wipe — one node, or all nodes when node_id is None.
+
+        Bulk is iterated per node client-side: the aggregate endpoints
+        (GET .../nodes/start) return 400/500 on EVE-NG PRO 6.4 even though
+        the per-node ones work.
+        """
         if action not in ("start", "stop", "wipe"):
             raise EvengError(f"Unknown node action: {action}")
         base = f"/labs{_quote_lab(lab_path)}/nodes"
-        path = f"{base}/{node_id}/{action}" if node_id is not None else f"{base}/{action}"
-        return await self.request("GET", path)
+        if node_id is not None:
+            return await self.request("GET", f"{base}/{node_id}/{action}")
+
+        nodes = await self.get_nodes(lab_path)
+        results: dict[str, str] = {}
+        for nid, node in nodes.items():
+            status = node.get("status")
+            if action == "start" and status == 2:
+                results[nid] = "already running"
+                continue
+            if action == "stop" and status in (0, 1):
+                results[nid] = "already stopped"
+                continue
+            try:
+                await self.request("GET", f"{base}/{nid}/{action}")
+                results[nid] = "ok"
+            except EvengError as e:
+                results[nid] = f"error: {e}"
+        failed = {k: v for k, v in results.items() if v.startswith("error")}
+        return {"action": action, "nodes": results, "ok": not failed}
 
     async def get_interfaces(self, lab_path: str, node_id: int) -> dict:
         return await self.data("GET", f"/labs{_quote_lab(lab_path)}/nodes/{node_id}/interfaces")

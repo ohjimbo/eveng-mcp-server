@@ -60,3 +60,19 @@ async def test_lab_path_with_spaces_is_quoted(eveng_api, client: EvengClient):
     )
     await client.get_nodes("/Campus Fabric.unl")
     assert route.called
+
+
+async def test_bulk_node_action_iterates_per_node(eveng_api, client: EvengClient):
+    """EVE-NG PRO 6.4 rejects the aggregate /nodes/start|stop endpoints —
+    bulk must iterate per node, skipping nodes already in the target state."""
+    stop1 = eveng_api.get(f"{BASE}/labs/Test.unl/nodes/1/stop").mock(
+        return_value=Response(200, json={"code": 200})
+    )
+    stop2 = eveng_api.get(f"{BASE}/labs/Test.unl/nodes/2/stop").mock(
+        return_value=Response(200, json={"code": 200})
+    )
+    result = await client.node_action("/Test.unl", "stop", None)
+    assert stop1.called and stop2.called
+    # node 3 is already stopped (status 0) — must NOT be hit
+    assert result["nodes"]["3"] == "already stopped"
+    assert result["ok"] is True

@@ -124,20 +124,27 @@ async def build_topology(
     net_ids: dict[str, int] = {}
     node_ids: dict[str, int] = {}
     warnings: list[str] = []
-    template_default_eth: dict[str, int | None] = {}
+    template_defaults: dict[str, dict] = {}
 
-    async def _default_ethernet(template: str) -> int | None:
-        """Template's default NIC count (None if it can't be determined)."""
-        if template not in template_default_eth:
+    async def _defaults(template: str) -> dict:
+        """Template default ram/cpu/ethernet. EVE-NG does NOT apply template
+        defaults to API-created nodes (the GUI does that client-side) — an
+        omitted 'ram' gives a 1024MB node that a vJunos image will never
+        boot on, so we must fetch and send them explicitly."""
+        if template not in template_defaults:
+            out: dict = {}
             try:
                 detail = await client.template_detail(template)
                 opts = detail.get("options", {}) if isinstance(detail, dict) else {}
-                eth = opts.get("ethernet", {})
-                val = eth.get("value") if isinstance(eth, dict) else eth
-                template_default_eth[template] = int(val) if val else None
+                for key in ("ram", "cpu", "ethernet"):
+                    val = opts.get(key, {})
+                    val = val.get("value") if isinstance(val, dict) else val
+                    if val:
+                        out[key] = int(val)
             except (EvengError, TypeError, ValueError):
-                template_default_eth[template] = None
-        return template_default_eth[template]
+                pass
+            template_defaults[template] = out
+        return template_defaults[template]
 
     for idx, (kind, item) in enumerate(steps):
         label = _step_label(kind, item)
@@ -170,26 +177,26 @@ async def build_topology(
                 }
                 if item.get("image"):
                     body["image"] = item["image"]
-                # 'ethernet' is an EXACT count to EVE-NG (omitted = template
-                # default). required_slots is a floor, never a shrink: only
-                # send a value when it must be raised above what the node
-                # would otherwise get.
                 required = required_slots[item["name"]]
                 if body["type"] == "qemu":
-                    if item.get("ethernet"):
-                        body["ethernet"] = max(item["ethernet"], required)
-                    elif required:
-                        default_eth = await _default_ethernet(item["template"])
-                        if default_eth is None:
-                            warnings.append(
-                                f"{item['name']}: could not read template default "
-                                f"NIC count — left at default; needs >= {required}"
-                            )
-                        elif required > default_eth:
-                            body["ethernet"] = required
-                for k in ("ram", "cpu"):
-                    if item.get(k):
-                        body[k] = item[k]
+                    defaults = await _defaults(item["template"])
+                    if not defaults:
+                        warnings.append(
+                            f"{item['name']}: could not read template defaults — "
+                            "node may get EVE's generic 1024MB/1cpu/4eth"
+                        )
+                    for k in ("ram", "cpu"):
+                        v = item.get(k) or defaults.get(k)
+                        if v:
+                            body[k] = v
+                    eth = max(item.get("ethernet") or defaults.get("ethernet") or 0,
+                              required)
+                    if eth:
+                        body["ethernet"] = eth
+                else:
+                    for k in ("ram", "cpu", "ethernet"):
+                        if item.get(k):
+                            body[k] = item[k]
                 resp = await client.add_node(lab_path, body)
                 nid = _new_id(resp)
                 if nid is None:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from eveng_mcp.client import EvengClient
+from eveng_mcp.client import EvengClient, EvengError
 from eveng_mcp.config import Config
 from eveng_mcp.inventory import PlatformMap
 from eveng_mcp.tools._common import make_tool
@@ -69,14 +69,28 @@ def register(mcp, cfg: Config, client: EvengClient, platforms: PlatformMap) -> N
         }
         if image:
             spec["image"] = image
-        if ethernet:
-            spec["ethernet"] = ethernet
-        if ram:
-            spec["ram"] = ram
-        if cpu:
-            spec["cpu"] = cpu
+        # EVE-NG does NOT apply template defaults to API-created nodes (the
+        # GUI does that client-side) — fetch and send them, or a vJunos node
+        # silently gets 1024MB and never boots.
+        defaults: dict = {}
+        if spec["type"] == "qemu" and not (ram and cpu and ethernet):
+            try:
+                detail = await client.template_detail(template)
+                opts = detail.get("options", {}) if isinstance(detail, dict) else {}
+                for key in ("ram", "cpu", "ethernet"):
+                    val = opts.get(key, {})
+                    val = val.get("value") if isinstance(val, dict) else val
+                    if val:
+                        defaults[key] = int(val)
+            except (EvengError, TypeError, ValueError):
+                pass
+        for key, arg in (("ethernet", ethernet), ("ram", ram), ("cpu", cpu)):
+            v = arg or defaults.get(key)
+            if v:
+                spec[key] = v
         result = await client.add_node(lab_path, spec)
-        return {"added": name, "response": result}
+        return {"added": name, "applied": {k: spec.get(k) for k in ("ram", "cpu", "ethernet")},
+                "response": result}
 
     @tool(write=True)
     async def eveng_start_nodes(lab_path: str, node_id: int | None = None) -> dict:

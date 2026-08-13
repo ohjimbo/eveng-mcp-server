@@ -88,12 +88,16 @@ def eveng_api():
         )
         router.get(f"{BASE}/list/templates/vjunosswitch").mock(
             return_value=Response(
-                200, json={"code": 200, "data": {"options": {"ethernet": {"value": 11}}}}
+                200, json={"code": 200, "data": {"options": {
+                    "ethernet": {"value": 11}, "ram": {"value": 5120},
+                    "cpu": {"value": 4}}}}
             )
         )
         router.get(f"{BASE}/list/templates/veos").mock(
             return_value=Response(
-                200, json={"code": 200, "data": {"options": {"ethernet": {"value": 8}}}}
+                200, json={"code": 200, "data": {"options": {
+                    "ethernet": {"value": 8}, "ram": {"value": 2048},
+                    "cpu": {"value": 2}}}}
             )
         )
         router.get(f"{BASE}/status").mock(

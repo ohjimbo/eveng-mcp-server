@@ -47,13 +47,18 @@ async def test_build_happy_path(eveng_api, client, platforms):
     # ge-0/0/0 → slot 1 (junos offset); Ethernet1 → slot 1
     assert json.loads(put_r1.calls[0].request.content) == {"1": "7"}
     assert json.loads(put_r2.calls[0].request.content) == {"1": "7"}
-    # required slots (2) < template defaults (11/8) → ethernet must NOT be
-    # sent, or the node would be created with FEWER NICs than its default
-    node_posts = [c for c in eveng_api.calls
+    # EVE-NG does NOT apply template defaults to API-created nodes — the
+    # create bodies must carry them explicitly (and never shrink ethernet
+    # below the default: required slots here is only 2)
+    node_posts = [json.loads(c.request.content) for c in eveng_api.calls
                   if c.request.url.path == "/api/labs/Build.unl/nodes"
                   and c.request.method == "POST"]
-    for call in node_posts:
-        assert "ethernet" not in json.loads(call.request.content)
+    by_name = {b["name"]: b for b in node_posts}
+    assert by_name["R1"]["ram"] == 5120
+    assert by_name["R1"]["cpu"] == 4
+    assert by_name["R1"]["ethernet"] == 11
+    assert by_name["R2"]["ram"] == 2048
+    assert by_name["R2"]["ethernet"] == 8
 
 
 async def test_validation_before_any_api_call(eveng_api, client, platforms):

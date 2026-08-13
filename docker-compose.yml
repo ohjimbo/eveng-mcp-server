@@ -1,0 +1,16 @@
+# Quickstart:  cp .env.example .env  →  edit  →  docker compose up -d
+services:
+  eveng-mcp:
+    build: .
+    container_name: eveng-mcp
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "8080:8080"          # behind a local TLS proxy, prefer "127.0.0.1:8080:8080"
+    # Only needed for the junos_mcp integration. WARNING: mounting docker.sock
+    # grants this container the FULL Docker Engine API — root-equivalent
+    # control of the host — even though the code only uses the container
+    # archive endpoints. Prefer pointing DOCKER_SOCKET at a filtering proxy
+    # (e.g. tecnativa/docker-socket-proxy). See README "Securing the endpoint".
+    # volumes:
+    #   - /var/run/docker.sock:/var/run/docker.sock

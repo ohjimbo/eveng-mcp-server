@@ -1,0 +1,188 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  platforms.yaml — the single mapping spine
+#
+#  Maps EVE-NG template names → vendor/OS identity, console behavior, and
+#  NetBox device-type associations. Override the whole file with
+#  EVENG_PLATFORM_MAP=/path/to/your/platforms.yaml (your file is merged over
+#  this one: os_families / templates / prefixes keys are deep-merged).
+#
+#  Console tiers (derived, not declared):
+#    tier 1 — os_family has `scrapli`             → full driver semantics
+#    tier 2 — template/family has `console` block → generic expect
+#    tier 3 — everything else                     → raw read/write only
+#
+#  Interface slot mapping: `naming` is the data-plane pattern with {n};
+#  `slot` says how n maps to an EVE-NG slot index ("n" or "n+1" — templates
+#  whose slot 0 is a management port use "n+1").
+# ═══════════════════════════════════════════════════════════════════════════
+
+defaults:
+  boot_seconds: 60
+
+os_families:
+  junos:
+    vendor: juniper
+    scrapli: juniper_junos
+    show_config: "show configuration | display set"
+    halt: "request system halt"
+    netbox_platform: junos
+  eos:
+    vendor: arista
+    scrapli: arista_eos
+    show_config: "show running-config"
+    netbox_platform: eos
+  ios:
+    vendor: cisco
+    scrapli: cisco_iosxe
+    show_config: "show running-config"
+    netbox_platform: ios
+  nxos:
+    vendor: cisco
+    scrapli: cisco_nxos
+    show_config: "show running-config"
+    netbox_platform: nxos
+  srlinux:
+    vendor: nokia
+    # scrapli platform nokia_srlinux requires scrapli-community; tier 2 by default
+    console:
+      prompts:
+        operational: '--\{.*\}--'
+      disable_paging: "environment cli-engine type basic"
+    show_config: "info flat"
+    netbox_platform: srlinux
+  vyos:
+    vendor: vyos
+    console:
+      prompts:
+        operational: '\$ $'
+        config: '# $'
+    show_config: "show configuration commands"
+    halt: "poweroff now"
+    netbox_platform: vyos
+  linux:
+    vendor: generic
+    console:
+      prompts:
+        operational: '[#$] $'
+    halt: "poweroff"
+
+templates:
+  # ── Juniper ──────────────────────────────────────────────────────────────
+  vjunosrouter:
+    os: junos
+    interfaces: { naming: "ge-0/0/{n}", slot: "n+1", mgmt: fxp0 }
+    boot_seconds: 300
+    netbox_device_types: [MX204, MX10003]
+  vjunos-router:
+    os: junos
+    interfaces: { naming: "ge-0/0/{n}", slot: "n+1", mgmt: fxp0 }
+    boot_seconds: 300
+    netbox_device_types: []
+  vjunosswitch:
+    os: junos
+    interfaces: { naming: "ge-0/0/{n}", slot: "n+1", mgmt: fxp0 }
+    boot_seconds: 300
+    netbox_device_types: [EX4650-48Y, QFX5120-48Y]
+  vjunos-switch:
+    os: junos
+    interfaces: { naming: "ge-0/0/{n}", slot: "n+1", mgmt: fxp0 }
+    boot_seconds: 300
+    netbox_device_types: []
+  vjunosevolved:
+    os: junos
+    interfaces: { naming: "et-0/0/{n}", slot: "n+1", mgmt: re0:mgmt-0 }
+    boot_seconds: 420
+    netbox_device_types: [PTX10001-36MR]
+  vjunos-evolved:
+    os: junos
+    interfaces: { naming: "et-0/0/{n}", slot: "n+1", mgmt: re0:mgmt-0 }
+    boot_seconds: 420
+    netbox_device_types: []
+  vmx:
+    os: junos
+    interfaces: { naming: "ge-0/0/{n}", slot: "n+1", mgmt: fxp0 }
+    boot_seconds: 420
+    netbox_device_types: [MX480, MX960]
+  vmxvcp:
+    os: junos
+    boot_seconds: 420
+  vsrx:
+    os: junos
+    interfaces: { naming: "ge-0/0/{n}", slot: "n+1", mgmt: fxp0 }
+    boot_seconds: 300
+    netbox_device_types: [SRX340, SRX1500, SRX4600]
+  vqfx:
+    os: junos
+    interfaces: { naming: "xe-0/0/{n}", slot: "n+1", mgmt: em0 }
+    boot_seconds: 300
+    netbox_device_types: [QFX5100-48S]
+
+  # ── Arista ───────────────────────────────────────────────────────────────
+  veos:
+    os: eos
+    interfaces: { naming: "Ethernet{n}", slot: "n", mgmt: Management1 }
+    boot_seconds: 150
+    netbox_device_types: [DCS-7050SX3-48YC8, DCS-7280SR-48C6]
+  ceos:
+    os: eos
+    interfaces: { naming: "Ethernet{n}", slot: "n", mgmt: Management0 }
+    boot_seconds: 60
+
+  # ── Cisco ────────────────────────────────────────────────────────────────
+  iol:
+    os: ios
+    eve_type: iol
+    boot_seconds: 30
+  vios:
+    os: ios
+    interfaces: { naming: "GigabitEthernet0/{n}", slot: "n" }
+    boot_seconds: 120
+  viosl2:
+    os: ios
+    interfaces: { naming: "GigabitEthernet0/{n}", slot: "n" }
+    boot_seconds: 120
+  csr1000vng:
+    os: ios
+    interfaces: { naming: "GigabitEthernet{n}", slot: "n-1" }
+    boot_seconds: 240
+  cat8000v:
+    os: ios
+    boot_seconds: 240
+  nxosv9k:
+    os: nxos
+    interfaces: { naming: "Ethernet1/{n}", slot: "n" }
+    boot_seconds: 300
+
+  # ── Others ───────────────────────────────────────────────────────────────
+  srlinux:
+    os: srlinux
+    interfaces: { naming: "ethernet-1/{n}", slot: "n" }
+    boot_seconds: 90
+  vyos:
+    os: vyos
+    interfaces: { naming: "eth{n}", slot: "n" }
+    boot_seconds: 90
+  linux:
+    os: linux
+    boot_seconds: 45
+  vpcs:
+    os: linux
+    eve_type: vpcs
+    boot_seconds: 10
+
+# Longest-prefix fallback for template names not listed above
+# (custom image names like "vjunosevolved-23.2R1" resolve via prefix).
+prefixes:
+  vjunos: junos
+  vmx: junos
+  vsrx: junos
+  vqfx: junos
+  veos: eos
+  ceos: eos
+  vios: ios
+  iol: ios
+  csr: ios
+  cat8: ios
+  nxos: nxos
+  srlinux: srlinux
+  vyos: vyos

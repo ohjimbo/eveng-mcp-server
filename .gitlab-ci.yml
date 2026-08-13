@@ -1,0 +1,76 @@
+# eveng-mcp-server pipeline — lint → test → build → deploy
+#
+# Runner: shell executor on the Unraid host (tag `unraid`) with docker CLI.
+# Lint/test run inside a python:3.12 container so the host needs no Python.
+# Code is baked into the image — no bind-mount overlay, nothing to preserve.
+
+stages:
+  - lint
+  - test
+  - build
+  - deploy
+
+variables:
+  IMAGE_NAME: eveng-mcp
+  CONTAINER_NAME: eveng-mcp
+
+lint:
+  stage: lint
+  tags: [unraid]
+  script:
+    - docker run --rm -v "$CI_PROJECT_DIR:/src" -w /src python:3.12-slim
+      sh -c "pip install -q ruff && ruff check ."
+
+test:
+  stage: test
+  tags: [unraid]
+  script:
+    - docker run --rm -v "$CI_PROJECT_DIR:/src" -w /src python:3.12-slim
+      sh -c "pip install -q -e .[dev] && pytest -q"
+
+build:
+  stage: build
+  tags: [unraid]
+  script:
+    - docker build -t $IMAGE_NAME:latest -t $IMAGE_NAME:$CI_COMMIT_SHORT_SHA .
+  only:
+    - main
+
+deploy:
+  stage: deploy
+  tags: [unraid]
+  script:
+    - docker stop $CONTAINER_NAME || true
+    - docker rm $CONTAINER_NAME || true
+    # host networking: junos-mcp-server listens on localhost:30030 on this
+    # host, and MCP_PORT=8090 avoids clashing with mcp-homelab on 8080.
+    - |
+      docker run -d \
+        --name $CONTAINER_NAME \
+        --restart unless-stopped \
+        --network host \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        -e MCP_PORT=8090 \
+        -e MCP_AUTH_TOKEN="${MCP_AUTH_TOKEN}" \
+        -e EVENG_HOST="${EVENG_HOST}" \
+        -e EVENG_USER="${EVENG_USER}" \
+        -e EVENG_PASS="${EVENG_PASS}" \
+        -e EVENG_PROTOCOL="${EVENG_PROTOCOL}" \
+        -e CONSOLE_USER="${CONSOLE_USER}" \
+        -e CONSOLE_PASS="${CONSOLE_PASS}" \
+        -e IDRAC_HOST="${IDRAC_HOST}" \
+        -e IDRAC_USER="${IDRAC_USER}" \
+        -e IDRAC_PASS="${IDRAC_PASS}" \
+        -e GITLAB_URL="${BACKUP_GITLAB_URL}" \
+        -e GITLAB_TOKEN="${BACKUP_GITLAB_TOKEN}" \
+        -e GITLAB_BACKUP_PROJECT="${GITLAB_BACKUP_PROJECT}" \
+        -e JMCP_URL="${JMCP_URL}" \
+        -e JMCP_DEVICE_USER="${JMCP_DEVICE_USER}" \
+        -e JMCP_DEVICE_PASS="${JMCP_DEVICE_PASS}" \
+        $IMAGE_NAME:latest
+    - echo "Deployed $IMAGE_NAME:$CI_COMMIT_SHORT_SHA"
+    - sleep 5
+    - docker logs --tail 30 $CONTAINER_NAME
+    - "curl -sf http://localhost:8090/health || (echo 'health check FAILED' && exit 1)"
+  only:
+    - main

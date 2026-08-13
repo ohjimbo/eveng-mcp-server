@@ -195,34 +195,77 @@ class TelnetConsole:
 
 # ── tier 1: scrapli drivers ────────────────────────────────────────────────
 
+# Login-state walk for _ensure_logged_in. '(?<!Last )login:' avoids matching
+# a chunk that happens to end at Junos's "Last login: ..." banner line.
+_STATE_RX = (
+    r"((?<!Last )[Ll]ogin: ?$|[Pp]assword: ?$|:~ ?# $|% $|> $|# $)"
+)
+
+
+async def _ensure_logged_in(
+    host: str, port: int, username: str, password: str, platform: str
+) -> None:
+    """Bring the console tty to an operational prompt before scrapli takes
+    over. EVE-NG console sessions persist across telnet connections, and any
+    login prompt was printed BEFORE we connected — scrapli's own telnet auth
+    (which passively waits for a prompt) times out on a silent console. So:
+    nudge, walk the login/password states ourselves, and for Junos step from
+    the root shell into the cli."""
+    con = TelnetConsole(host, port)
+    await con.open()
+    try:
+        await con.write("\r")
+        for _ in range(6):  # bounded state walk
+            r = await con.expect(_STATE_RX, timeout=20)
+            if not r["matched"]:
+                raise ConsoleError(
+                    f"Console {host}:{port}: no recognizable prompt after nudge; "
+                    f"tail: {r['output'][-200:]!r}"
+                )
+            out = r["output"]
+            if re.search(r"(?<!Last )[Ll]ogin: ?$", out):
+                if not username:
+                    raise ConsoleError(
+                        "Console shows a login prompt but no credentials were "
+                        "given — pass username/password or set CONSOLE_USER/PASS"
+                    )
+                await con.write(username + "\r")
+                continue
+            if re.search(r"[Pp]assword: ?$", out):
+                await con.write((password or "") + "\r")
+                continue
+            if re.search(r"(:~ ?# |% )$", out) and platform == "juniper_junos":
+                await con.write("cli\r")  # root shell → operational cli
+                continue
+            return  # at an operational prompt
+        raise ConsoleError(
+            f"Console {host}:{port}: login loop did not reach a prompt — "
+            "wrong credentials, or tty left in an unexpected mode"
+        )
+    finally:
+        await con.close()
+
 
 def _scrapli_conn(
     platform: str,
     host: str,
     port: int,
-    username: str = "",
-    password: str = "",
     timeout_ops: float = 60,
 ):
     from scrapli import AsyncScrapli
 
-    kwargs: dict = {
-        "platform": platform,
-        "host": host,
-        "port": port,
-        "transport": "asynctelnet",
-        "timeout_socket": 15,
-        "timeout_transport": 30,
-        "timeout_ops": timeout_ops,
-    }
-    if username or password:
-        kwargs["auth_username"] = username
-        kwargs["auth_password"] = password
-    else:
-        # No creds: assume the console is already at a prompt (common for
-        # lab images) and skip scrapli's auth phase entirely.
-        kwargs["auth_bypass"] = True
-    return AsyncScrapli(**kwargs)
+    # auth_bypass always: _ensure_logged_in has already authenticated the
+    # persistent console session in a separate connection.
+    return AsyncScrapli(
+        platform=platform,
+        host=host,
+        port=port,
+        transport="asynctelnet",
+        auth_bypass=True,
+        timeout_socket=15,
+        timeout_transport=30,
+        timeout_ops=timeout_ops,
+    )
 
 
 async def driver_run(
@@ -237,7 +280,8 @@ async def driver_run(
 ) -> dict:
     """Run operational commands and/or push config lines via a scrapli driver
     over the node's telnet console. Returns per-command results."""
-    conn = _scrapli_conn(platform, host, port, username, password, timeout_ops)
+    await _ensure_logged_in(host, port, username, password, platform)
+    conn = _scrapli_conn(platform, host, port, timeout_ops)
     results: list[dict] = []
     try:
         async with conn:

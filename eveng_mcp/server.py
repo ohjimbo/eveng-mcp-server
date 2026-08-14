@@ -29,16 +29,51 @@ INSTRUCTIONS = (
 )
 
 
+def _build_auth(cfg: Config):
+    """Bearer token always; optional OIDC in front of it when configured.
+
+    Set OIDC_CONFIG_URL + OIDC_CLIENT_ID + OIDC_CLIENT_SECRET + MCP_BASE_URL
+    to let browser-based MCP clients (e.g. claude.ai custom connectors)
+    authenticate via your identity provider, while CLI clients keep using
+    the static bearer token."""
+    from fastmcp.server.auth import StaticTokenVerifier
+
+    static = StaticTokenVerifier(
+        tokens={cfg.auth_token: {"client_id": "eveng-mcp-client", "scopes": []}}
+    )
+    oidc_url = cfg.env("OIDC_CONFIG_URL")
+    client_id = cfg.env("OIDC_CLIENT_ID")
+    client_secret = cfg.env("OIDC_CLIENT_SECRET")
+    base_url = cfg.env("MCP_BASE_URL")
+    if not (oidc_url and client_id and client_secret and base_url):
+        return static, False
+    try:
+        from fastmcp.server.auth import MultiAuth
+        from fastmcp.server.auth.oidc_proxy import OIDCProxy
+
+        oauth = OIDCProxy(
+            config_url=oidc_url,
+            client_id=client_id,
+            client_secret=client_secret,
+            base_url=base_url,
+            require_authorization_consent=False,
+            verify_id_token=False,
+        )
+        return MultiAuth(server=oauth, verifiers=[static]), True
+    except Exception as e:  # noqa: BLE001 — degrade to bearer-only, loudly
+        print(f"⚠  OIDC setup failed: {e} — falling back to bearer-only auth",
+              file=sys.stderr)
+        return static, False
+
+
 def build_mcp(cfg: Config):
     """Create the FastMCP instance with every applicable tool registered.
     Returns (mcp, integration_report)."""
     from fastmcp import FastMCP
-    from fastmcp.server.auth import StaticTokenVerifier
 
-    auth = StaticTokenVerifier(
-        tokens={cfg.auth_token: {"client_id": "eveng-mcp-client", "scopes": []}}
-    )
+    auth, oidc_enabled = _build_auth(cfg)
     mcp = FastMCP(name="eveng", auth=auth, instructions=INSTRUCTIONS)
+    mcp._eveng_oidc_enabled = oidc_enabled  # surfaced in the startup banner
 
     client = EvengClient(
         host=cfg.eveng_host,
@@ -131,6 +166,8 @@ def main() -> None:
     print(f"Health check  : http://{cfg.host}:{cfg.port}/health")
     if cfg.read_only:
         print("Mode          : READ-ONLY (write tools not registered)")
+    if cfg.env("MCP_BASE_URL"):
+        print(f"OAuth/OIDC    : {cfg.env('MCP_BASE_URL')} (bearer token also accepted)")
     enabled = ", ".join(e["name"] for e in report["enabled"]) or "none"
     print(f"Integrations  : {enabled}")
     for s in report["skipped"]:

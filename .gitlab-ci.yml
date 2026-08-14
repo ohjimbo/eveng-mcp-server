@@ -52,6 +52,10 @@ deploy:
         -e EVENG_PROTOCOL="${EVENG_PROTOCOL}" \
         -e CONSOLE_USER="${CONSOLE_USER}" \
         -e CONSOLE_PASS="${CONSOLE_PASS}" \
+        -e OIDC_CONFIG_URL="${OIDC_CONFIG_URL}" \
+        -e OIDC_CLIENT_ID="${OIDC_CLIENT_ID}" \
+        -e OIDC_CLIENT_SECRET="${OIDC_CLIENT_SECRET}" \
+        -e MCP_BASE_URL="${MCP_BASE_URL}" \
         -e IDRAC_HOST="${IDRAC_HOST}" \
         -e IDRAC_USER="${IDRAC_USER}" \
         -e IDRAC_PASS="${IDRAC_PASS}" \

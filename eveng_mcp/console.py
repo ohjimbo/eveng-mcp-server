@@ -282,7 +282,35 @@ async def driver_run(
     timeout_ops: float = 60,
 ) -> dict:
     """Run operational commands and/or push config lines via a scrapli driver
-    over the node's telnet console. Returns per-command results."""
+    over the node's telnet console. Returns per-command results.
+
+    One automatic retry: EVE's console proxy occasionally flakes on
+    connect/first-read (seen under multi-node load), and the sessions are
+    stateless so a clean second attempt is safe."""
+    last_error: ConsoleError | None = None
+    for attempt in (1, 2):
+        try:
+            return await _driver_run_once(
+                platform, host, port, commands, configs, username, password,
+                timeout_ops,
+            )
+        except ConsoleError as e:
+            last_error = e
+            if attempt == 1:
+                await asyncio.sleep(2)
+    raise last_error  # type: ignore[misc]
+
+
+async def _driver_run_once(
+    platform: str,
+    host: str,
+    port: int,
+    commands: list[str] | None,
+    configs: list[str] | None,
+    username: str,
+    password: str,
+    timeout_ops: float,
+) -> dict:
     await _ensure_logged_in(host, port, username, password, platform)
     conn = _scrapli_conn(platform, host, port, timeout_ops)
     results: list[dict] = []

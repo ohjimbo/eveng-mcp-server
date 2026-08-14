@@ -19,6 +19,21 @@ Every platform lands on a tier. "Unsupported vendor" isn't an answer this server
 - **Skills over frameworks.** Multi-step orchestration (safe teardown, NetBox fabric build, mgmt bootstrap) ships as markdown runbooks served via `skills_list` / `skills_load` — editable without a redeploy, adaptive when a step fails.
 - **Fail loudly.** Unmapped templates are reported, not dropped. Failed reads abort writes. Explicitly-enabled-but-unconfigured integrations stop startup.
 
+## EVE-NG compatibility
+
+| Edition | Status |
+|---|---|
+| **EVE-NG Professional 6.4** | ✅ Certified — full live test plan ([docs/TEST_PLAN.md](docs/TEST_PLAN.md)) including an autonomously built and verified EVPN/VXLAN fabric |
+| **EVE-NG Community** | Expected to work, not yet live-tested. The client auto-detects the one known API dialect difference (per-node stop endpoint) and tries the community form first. Reports welcome. |
+
+API realities this server handles for you (found the hard way, both editions get the fixes):
+
+- Template defaults are **not** applied to API-created nodes — the server fetches them and sends ram/cpu/ethernet explicitly, or your vJunos gets 1024 MB and never boots
+- Interfaces can't be connected to hidden (`visibility=0`) networks — p2p bridges are created visible, connected, then hidden
+- Interface disconnect is an **empty-string** value in the PUT body, not `"0"`
+- Aggregate `/nodes/start|stop` endpoints are unreliable — bulk actions iterate per node
+- The console proxy replays stale screen content and can drop bytes written immediately after connect — console tools settle before sending
+
 ## Quickstart
 
 ```bash

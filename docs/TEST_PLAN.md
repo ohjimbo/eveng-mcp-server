@@ -4,12 +4,12 @@ Two layers: **CI tests** (pytest against a mocked EVE-NG API — run on every
 push) and **live tests** (executed against a deployed server + real EVE-NG).
 Re-run this plan after any change to client.py, console.py, or topology.py.
 
-**Certification run: 2026-08-13.** Server `eveng-mcp` @ Unraid :8090 (host
-network), EVE-NG **6.4.0-78-PRO** bare metal, 13 pre-existing labs / 110
-devices. All mutations confined to scratch labs `/MCP-Test.unl` +
-`/MCP-Stop.unl` (both deleted afterward); pre-existing labs read, never
-touched. The run surfaced **5 live-only defects**, all fixed and re-verified
-(commits 43555ea…d998120) — see "Defects found live" at the bottom.
+**Certification run: 2026-08-13.** Deployed container (host network) against
+EVE-NG **6.4.0-78-PRO** bare metal, 13 pre-existing labs / 110 devices. All
+mutations confined to scratch labs (deleted afterward, except the kept
+`/MCP-DC-Fabric.unl` demo lab); pre-existing labs read, never touched. The
+run surfaced **9 live-only defects**, all fixed and re-verified — see
+"Defects found live" at the bottom.
 
 Legend: ✅ pass · ⚠ pass-with-finding (fixed) · ⏸ blocked · ➖ n/a
 
@@ -72,10 +72,32 @@ Legend: ✅ pass · ⚠ pass-with-finding (fixed) · ⏸ blocked · ➖ n/a
 
 | # | Test | Expected | Result |
 |---|---|---|---|
-| 4.1 | CI vars (CONSOLE_*, IDRAC_PASS, BACKUP_GITLAB_*, JMCP_DEVICE_*) | set + redeploy | ⏸ automation policy blocks credential-value writes — set manually in GitLab → project 25 → Settings → CI/CD → Variables, then re-run pipeline |
-| 4.2 | capabilities post-redeploy | idrac + gitlab_backup enabled | ⏸ depends on 4.1 |
-| 4.3 | `eveng_host_power_status` | PowerState On | ⏸ depends on 4.1 |
-| 4.4 | `eveng_backup_configs` | commit in root/eveng-backups | ⏸ depends on 4.1 |
+| 4.1 | CI vars (CONSOLE_*, IDRAC_PASS, BACKUP_GITLAB_*, JMCP_DEVICE_*) | set + redeploy | ✅ (set with operator approval; redeploy picked them up) |
+| 4.2 | capabilities post-redeploy | idrac + gitlab_backup enabled | ✅ 3 enabled, netbox correctly still skipped |
+| 4.3 | `eveng_host_power_status` | PowerState On | ✅ PowerEdge R820, On (read-only Redfish) |
+| 4.4 | `eveng_backup_configs` on the fabric lab | one commit, per-node .conf files | ✅ commit `7ea0bf7b`: spine/leaf configs; tier-2 hosts skipped with reasons; one transient console timeout → defect L9 (retry) |
+
+## Phase 7 — EVPN/VXLAN datacenter fabric (scale + protocol test)
+
+Autonomously built, configured, and verified a 3-stage Clos fabric:
+2× spine (RR) + 3× leaf (vJunos-switch 25.2) + 3× hosts; OSPF underlay on
+/31s, iBGP EVPN overlay (AS 65000, spine route reflectors), VXLAN VNI 10100
+stretched across all three leaves.
+
+| # | Test | Expected | Result |
+|---|---|---|---|
+| 7.1 | `eveng_build_topology`: 8 nodes, 9 links, one call | full build, correct slots | ✅ 18 steps, 0 failures |
+| 7.2 | bulk start 8 nodes | all ok | ✅ |
+| 7.3 | boot watch ×5 vJunos in parallel | all booted | ✅ (~8 min wall-clock) |
+| 7.4 | `console_send_config` ×5: full fabric config (25-35 lines each + commit) | commit complete on all | ✅ (spine1 needed the L9 retry; encrypted-password used to avoid interactive prompts) |
+| 7.5 | VPCS host IPs via `console_expect` | applied | ⚠→✅ exposed defect L8 (dropped early writes / stale-prompt matches) |
+| 7.6 | control plane: `show bgp summary` on spine1 | 3 leaves Establ, evpn routes | ✅ 3/3 Establ, bgp.evpn.0 populated |
+| 7.7 | EVPN database on leaf1 | local + remote MACs with VTEP sources | ✅ 1 local (ge-0/0/2), 2 remote (leaf2/leaf3 VTEPs) |
+| 7.8 | **dataplane**: h1→h2 and h1→h3 ping across VXLAN | replies | ✅ 5/5 + 5/5, ~3 ms |
+| 7.9 | `eveng_backup_configs` of the running fabric | committed to backup repo | ✅ (see 4.4) |
+
+The fabric lab is **kept** at `/MCP-DC-Fabric.unl` (nodes stopped) as a
+reusable demo: start it, wait for boot, and the whole EVPN fabric comes back.
 
 ## Phase 5 — Teardown & destructive (scratch labs only)
 
@@ -107,6 +129,8 @@ Legend: ✅ pass · ⚠ pass-with-finding (fixed) · ⏸ blocked · ➖ n/a
 | L5 | scrapli's passive telnet auth times out on EVE's persistent consoles (prompt printed before connect) | own the login walk via expect, then scrapli with auth_bypass (cbfdd86) |
 | L6 | junos config changes sat uncommitted (scrapli doesn't commit) | `config_commit` family directive, auto-appended (f06d92d) |
 | L7 | Per-node stop rejected on PRO — wants `/stop/stopmode=3` | dialect auto-detect with fallback + memo (d998120) |
+| L8 | EVE's console proxy drops bytes written immediately after connect (vpcs relay) AND replays stale screen content that satisfied expect patterns — VPCS commands silently never executed while tests reported success | settle-drain ~0.5s before sending in console_expect/console_write/login-walk; discarding the replay also kills the stale-prompt false-positive (20d3f83) |
+| L9 | Transient scrapli connect/read failures under multi-node load (~2 in ~20 driver sessions) | driver_run retries once after 2s — sessions are stateless so a clean second attempt is safe |
 
 Observation (not a defect): on this EVE-NG PRO build, consoles are
 **last-connect-wins** — a new telnet connection steals the console from the
@@ -118,4 +142,4 @@ builds that refuse; sessions here are short-lived by design either way.
 - Read-only mode live (unit-tested; needs a second deployment)
 - NetBox integration live (no NetBox instance here; first live run against a demo NetBox)
 - VNC-node refusal path (no VNC nodes in scratch labs)
-- Phase 4 integrations (blocked on CI variables — see above)
+- EVE-NG Community edition (dialect fallbacks in place; needs a community host)

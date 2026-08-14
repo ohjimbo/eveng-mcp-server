@@ -14,7 +14,9 @@ def test_exact_template_lookup(platforms: PlatformMap):
     assert info.os_family == "junos"
     assert info.scrapli_platform == "juniper_junos"
     assert info.console_tier == 1
-    assert info.boot_seconds == 420
+    assert info.boot_seconds == 600
+    # two-stage boot: wait for the inner Junos tty, not the shim's login:
+    assert info.boot_pattern == "(ttyd0|Amnesiac)"
 
 
 def test_prefix_fallback(platforms: PlatformMap):
@@ -28,8 +30,15 @@ def test_case_insensitive_exact_match(platforms: PlatformMap):
     info = platforms.lookup("vJunos-switch")
     assert info is not None
     assert info.interfaces.get("naming") == "ge-0/0/{n}"
-    assert info.boot_seconds == 300
+    assert info.boot_seconds == 600
+    assert info.boot_pattern == "(ttyd0|Amnesiac)"
     assert platforms.slot_for_interface("vJunos-switch", "ge-0/0/0") == 1
+
+
+def test_boot_pattern_absent_on_fast_platforms(platforms: PlatformMap):
+    # platforms without a two-stage boot fall back to generic prompts
+    assert platforms.lookup("vpcs").boot_pattern is None
+    assert platforms.lookup("veos").boot_pattern is None
 
 
 def test_unmapped_returns_none(platforms: PlatformMap):

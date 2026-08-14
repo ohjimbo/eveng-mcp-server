@@ -224,22 +224,29 @@ def register(mcp, cfg: Config, client: EvengClient, platforms: PlatformMap) -> N
     async def console_wait_for(
         lab_path: str,
         node: str,
-        pattern: str = "(login:|Login:|>|#|\\$)",
+        pattern: str = "",
         timeout: float = 0,
     ) -> dict:
         """Wait for a node's console to show signs of life (boot completion).
-        Default pattern matches common login/shell prompts; default timeout is
-        the template's boot_seconds from platforms.yaml. Nudges the console
-        with a newline every 15s to provoke a prompt (nudge is disabled in
-        read-only mode — the wait is then purely passive).
+        Default pattern is the template's boot_pattern from platforms.yaml
+        (which knows about two-stage boots — e.g. vJunos-switch shows a shim
+        'login:' minutes before the inner Junos tty is usable), falling back
+        to common login/shell prompts. Default timeout is the template's
+        boot_seconds. Nudges the console with a newline every 15s to provoke
+        a prompt (nudge disabled in read-only mode — purely passive then).
 
         Args:
             lab_path: e.g. '/MyLab.unl'.
             node: node name or numeric id.
-            pattern: regex to wait for.
+            pattern: regex to wait for ('' = template boot_pattern / generic
+                prompts).
             timeout: seconds (0 = use template boot_seconds).
         """
         dev = await _find_device(client, platforms, lab_path, node)
+        if not pattern:
+            info = platforms.lookup(dev["template"])
+            pattern = ((info.boot_pattern if info else None)
+                       or "(login:|Login:|>|#|\\$)")
         effective = timeout or dev["boot_seconds"]
         carry = ""
         async with TelnetConsole(dev["console"]["host"], dev["console"]["port"]) as con:

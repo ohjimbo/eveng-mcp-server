@@ -72,7 +72,8 @@ templates:
   vjunosrouter:
     os: junos
     interfaces: { naming: "ge-0/0/{n}", slot: "n+1", mgmt: fxp0 }
-    boot_seconds: 300
+    boot_pattern: "(Amnesiac|ttyd0|login:)"
+    boot_seconds: 540
     netbox_device_types: [MX204, MX10003]
   vjunos-router:
     os: junos
@@ -82,22 +83,28 @@ templates:
   vjunosswitch:
     os: junos
     interfaces: { naming: "ge-0/0/{n}", slot: "n+1", mgmt: fxp0 }
-    boot_seconds: 300
+    # two-stage boot: a Wind River shim shows "login:" minutes before the
+    # inner Junos console is usable — wait for the Junos tty instead
+    boot_pattern: "(ttyd0|Amnesiac)"
+    boot_seconds: 600
     netbox_device_types: [EX4650-48Y, QFX5120-48Y]
   vjunos-switch:
     os: junos
     interfaces: { naming: "ge-0/0/{n}", slot: "n+1", mgmt: fxp0 }
-    boot_seconds: 300
+    boot_pattern: "(ttyd0|Amnesiac)"
+    boot_seconds: 600
     netbox_device_types: []
   vjunosevolved:
     os: junos
     interfaces: { naming: "et-0/0/{n}", slot: "n+1", mgmt: re0:mgmt-0 }
-    boot_seconds: 420
+    boot_pattern: "(ttyd0|Amnesiac)"
+    boot_seconds: 600
     netbox_device_types: [PTX10001-36MR]
   vjunos-evolved:
     os: junos
     interfaces: { naming: "et-0/0/{n}", slot: "n+1", mgmt: re0:mgmt-0 }
-    boot_seconds: 420
+    boot_pattern: "(ttyd0|Amnesiac)"
+    boot_seconds: 600
     netbox_device_types: []
   vmx:
     os: junos

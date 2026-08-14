@@ -40,6 +40,7 @@ class PlatformInfo:
     halt: str | None = None
     config_commit: str | None = None
     boot_seconds: int = 60
+    boot_pattern: str | None = None  # console regex meaning "actually usable"
     interfaces: dict = field(default_factory=dict)
     netbox_platform: str | None = None
     netbox_device_types: list[str] = field(default_factory=list)
@@ -124,6 +125,7 @@ class PlatformMap:
             boot_seconds=int(
                 merged.get("boot_seconds", self.defaults.get("boot_seconds", 60))
             ),
+            boot_pattern=merged.get("boot_pattern"),
             interfaces=merged.get("interfaces", {}) or {},
             netbox_platform=merged.get("netbox_platform"),
             netbox_device_types=list(merged.get("netbox_device_types", []) or []),

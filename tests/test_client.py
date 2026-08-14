@@ -62,6 +62,28 @@ async def test_lab_path_with_spaces_is_quoted(eveng_api, client: EvengClient):
     assert route.called
 
 
+async def test_stop_falls_back_to_pro_stopmode(eveng_api, client: EvengClient):
+    """EVE-NG PRO rejects plain /stop with 400 — the client must retry with
+    /stop/stopmode=3 and remember the dialect."""
+    eveng_api.get(f"{BASE}/labs/Test.unl/nodes/1/stop").mock(
+        return_value=Response(400, json={"code": 400, "message": "Request not valid"})
+    )
+    pro = eveng_api.get(f"{BASE}/labs/Test.unl/nodes/1/stop/stopmode=3").mock(
+        return_value=Response(200, json={"code": 200, "message": "Node stopped"})
+    )
+    pro2 = eveng_api.get(f"{BASE}/labs/Test.unl/nodes/2/stop/stopmode=3").mock(
+        return_value=Response(200, json={"code": 200})
+    )
+    await client.node_action("/Test.unl", "stop", 1)
+    assert pro.called
+    # dialect remembered: node 2 goes straight to stopmode=3
+    await client.node_action("/Test.unl", "stop", 2)
+    assert pro2.called
+    plain_calls = [c for c in eveng_api.calls
+                   if c.request.url.path.endswith("/nodes/2/stop")]
+    assert not plain_calls
+
+
 async def test_bulk_node_action_iterates_per_node(eveng_api, client: EvengClient):
     """EVE-NG PRO 6.4 rejects the aggregate /nodes/start|stop endpoints —
     bulk must iterate per node, skipping nodes already in the target state."""

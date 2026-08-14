@@ -58,6 +58,7 @@ class EvengClient:
         self.timeout = timeout
         self._cookies: dict[str, str] = {}
         self._cookies_expire: float = 0.0
+        self._stop_suffix: str | None = None  # detected per-server, see _stop_node
 
     @property
     def base_url(self) -> str:
@@ -215,6 +216,8 @@ class EvengClient:
             raise EvengError(f"Unknown node action: {action}")
         base = f"/labs{_quote_lab(lab_path)}/nodes"
         if node_id is not None:
+            if action == "stop":
+                return await self._stop_node(base, node_id)
             return await self.request("GET", f"{base}/{node_id}/{action}")
 
         nodes = await self.get_nodes(lab_path)
@@ -228,12 +231,32 @@ class EvengClient:
                 results[nid] = "already stopped"
                 continue
             try:
-                await self.request("GET", f"{base}/{nid}/{action}")
+                if action == "stop":
+                    await self._stop_node(base, int(nid))
+                else:
+                    await self.request("GET", f"{base}/{nid}/{action}")
                 results[nid] = "ok"
             except EvengError as e:
                 results[nid] = f"error: {e}"
         failed = {k: v for k, v in results.items() if v.startswith("error")}
         return {"action": action, "nodes": results, "ok": not failed}
+
+    async def _stop_node(self, base: str, node_id: int) -> Any:
+        """Stop one node, auto-detecting the endpoint dialect: community
+        EVE-NG accepts GET .../stop, PRO 6.4 rejects it (400) and wants
+        .../stop/stopmode=3. The working variant is remembered."""
+        if self._stop_suffix is not None:
+            return await self.request("GET", f"{base}/{node_id}/{self._stop_suffix}")
+        try:
+            result = await self.request("GET", f"{base}/{node_id}/stop")
+            self._stop_suffix = "stop"
+            return result
+        except EvengApiError as e:
+            if e.status_code != 400:
+                raise
+        result = await self.request("GET", f"{base}/{node_id}/stop/stopmode=3")
+        self._stop_suffix = "stop/stopmode=3"
+        return result
 
     async def get_interfaces(self, lab_path: str, node_id: int) -> dict:
         return await self.data("GET", f"/labs{_quote_lab(lab_path)}/nodes/{node_id}/interfaces")

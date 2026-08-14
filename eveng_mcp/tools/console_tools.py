@@ -173,6 +173,10 @@ def register(mcp, cfg: Config, client: EvengClient, platforms: PlatformMap) -> N
         dev = await _find_device(client, platforms, lab_path, node)
         async with TelnetConsole(dev["console"]["host"], dev["console"]["port"]) as con:
             if send:
+                # Settle first: some EVE console backends (vpcs) drop bytes
+                # written during proxy attach, and discarding the replayed
+                # screen also stops the pattern matching a STALE prompt.
+                await con.read(duration=0.5)
                 if not send.endswith(("\n", "\r")):
                     send += "\r"
                 await con.write(send)
@@ -211,6 +215,7 @@ def register(mcp, cfg: Config, client: EvengClient, platforms: PlatformMap) -> N
         """
         dev = await _find_device(client, platforms, lab_path, node)
         async with TelnetConsole(dev["console"]["host"], dev["console"]["port"]) as con:
+            await con.read(duration=0.5)  # settle: see console_expect
             await con.write(data)
             output = await con.read(duration=2)
         return {"node": dev["name"], "output": output}

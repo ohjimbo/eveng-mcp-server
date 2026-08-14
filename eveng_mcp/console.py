@@ -214,6 +214,9 @@ async def _ensure_logged_in(
     con = TelnetConsole(host, port)
     await con.open()
     try:
+        # settle: some EVE console backends drop bytes written during proxy
+        # attach; drain the replayed screen before nudging
+        await con.read(duration=0.4)
         await con.write("\r")
         for _ in range(6):  # bounded state walk
             r = await con.expect(_STATE_RX, timeout=20)

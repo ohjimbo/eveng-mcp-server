@@ -50,6 +50,7 @@ deploy:
         -e EVENG_USER="${EVENG_USER}" \
         -e EVENG_PASS="${EVENG_PASS}" \
         -e EVENG_PROTOCOL="${EVENG_PROTOCOL}" \
+        -e EVENG_RAW_API="${EVENG_RAW_API}" \
         -e CONSOLE_USER="${CONSOLE_USER}" \
         -e CONSOLE_PASS="${CONSOLE_PASS}" \
         -e OIDC_CONFIG_URL="${OIDC_CONFIG_URL}" \

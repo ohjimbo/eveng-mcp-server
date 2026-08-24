@@ -112,9 +112,12 @@ def build_mcp(cfg: Config):
         """What THIS deployment can do: enabled integrations, skipped ones and
         why, read-only flag, and server version. The tool list already
         reflects this — skipped integrations' tools are not registered."""
+        from eveng_mcp.tools.raw import raw_api_mode
+
         return {
             "server_version": __version__,
             "read_only": cfg.read_only,
+            "raw_api": raw_api_mode(cfg),
             "eveng_host": cfg.eveng_host,
             "integrations": report,
         }

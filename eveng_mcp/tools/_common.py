@@ -43,7 +43,13 @@ def make_tool(mcp, cfg: Config):
             tags = {"write"} if write else {"read"}
             if destructive:
                 tags.add("destructive")
-            return mcp.tool(tags=tags)(tool_errors(fn))
+            # Mirror the tags into MCP-standard tool annotations so any
+            # client (not just ones reading our tags) can rank risk.
+            annotations = {
+                "readOnlyHint": not write,
+                "destructiveHint": destructive,
+            }
+            return mcp.tool(tags=tags, annotations=annotations)(tool_errors(fn))
 
         return decorator
 

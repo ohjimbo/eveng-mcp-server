@@ -117,6 +117,23 @@ async def test_disconnect_sends_empty_string(eveng_api, client):
     assert json.loads(route.calls[1].request.content) == {"1": "7"}
 
 
+async def test_rollback_on_failure_unwinds_created(eveng_api, client, platforms):
+    """A failed build with rollback_on_failure deletes what it created."""
+    eveng_api.post(f"{BASE}/labs/Build.unl/nodes").side_effect = [
+        Response(201, json={"code": 201, "data": {"id": 1}}),
+        Response(400, json={"code": 400, "message": "no space"}),
+    ]
+    del_node = eveng_api.delete(f"{BASE}/labs/Build.unl/nodes/1").mock(
+        return_value=Response(200, json={"code": 200})
+    )
+    result = await build_topology(client, platforms, "/Build.unl", SPEC,
+                                  rollback_on_failure=True)
+    assert result["success"] is False
+    assert del_node.called
+    assert result["rolled_back"]["deleted_nodes"] == ["R1"]
+    assert result["rolled_back"]["deleted_lab"] is None
+
+
 async def test_duplicate_names_rejected(eveng_api, client, platforms):
     result = await build_topology(
         client, platforms, "/Build.unl",

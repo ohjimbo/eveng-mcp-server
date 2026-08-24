@@ -42,10 +42,13 @@ async def build_topology(
     lab_path: str,
     spec: dict,
     create_lab: bool = False,
+    rollback_on_failure: bool = False,
 ) -> dict:
     """Build a topology from a declarative spec. Fail-fast: on the first
     failure, stop and report what was done, what failed, and what was never
-    attempted — no silent partial builds.
+    attempted — no silent partial builds. With rollback_on_failure, a failed
+    build also unwinds what it created (the whole lab when create_lab=True,
+    otherwise the created nodes/networks), best-effort.
 
     Spec:
       nodes:    [{name, template, image?, left?, top?, ram?, cpu?, ethernet?}]
@@ -123,6 +126,7 @@ async def build_topology(
 
     net_ids: dict[str, int] = {}
     node_ids: dict[str, int] = {}
+    p2p_net_ids: list[int] = []
     warnings: list[str] = []
     template_defaults: dict[str, dict] = {}
 
@@ -215,6 +219,7 @@ async def build_topology(
                     net_id = _new_id(resp)
                     if net_id is None:
                         raise EvengError(f"Bridge {bridge!r}: no id in response {resp}")
+                    p2p_net_ids.append(net_id)
                 else:
                     net_id = net_ids[item["network"]]
                 await client.connect_interface(
@@ -247,6 +252,31 @@ async def build_topology(
     }
     if warnings:
         result["warnings"] = warnings
+
+    if failed is not None and rollback_on_failure:
+        rolled: dict = {"deleted_lab": None, "deleted_nodes": [],
+                        "deleted_networks": [], "errors": []}
+        if create_lab and "create_lab" in done:
+            # we made the lab — the cleanest unwind is deleting it whole
+            try:
+                await client.delete_lab(lab_path)
+                rolled["deleted_lab"] = lab_path
+            except (EvengError, EvengApiError) as e:
+                rolled["errors"].append(f"delete_lab: {e}")
+        else:
+            for name, nid in node_ids.items():
+                try:
+                    await client.delete_node(lab_path, nid)
+                    rolled["deleted_nodes"].append(name)
+                except (EvengError, EvengApiError) as e:
+                    rolled["errors"].append(f"node {name}: {e}")
+            for nid in [*net_ids.values(), *p2p_net_ids]:
+                try:
+                    await client.delete_network(lab_path, nid)
+                    rolled["deleted_networks"].append(nid)
+                except (EvengError, EvengApiError) as e:
+                    rolled["errors"].append(f"network {nid}: {e}")
+        result["rolled_back"] = rolled
     return result
 
 
@@ -375,11 +405,15 @@ def register(mcp, cfg: Config, client: EvengClient, platforms: PlatformMap) -> N
 
     @tool(write=True)
     async def eveng_build_topology(
-        lab_path: str, spec: dict, create_lab: bool = False
+        lab_path: str,
+        spec: dict,
+        create_lab: bool = False,
+        rollback_on_failure: bool = False,
     ) -> dict:
         """Build a whole topology from one declarative spec — nodes, named
         networks, and links in a single call. Fail-fast with a full report of
-        done / failed / not-attempted steps.
+        done / failed / not-attempted steps; optionally unwinds what it
+        created when the build fails.
 
         Args:
             lab_path: e.g. '/Fabric.unl'.
@@ -389,5 +423,10 @@ def register(mcp, cfg: Config, client: EvengClient, platforms: PlatformMap) -> N
                 'name'}]}. Interface refs may be slot numbers or real names
                 ('spine1:et-0/0/0') for templates mapped in platforms.yaml.
             create_lab: create lab_path first (name taken from the filename).
+            rollback_on_failure: on failure, delete what this build created
+                (the whole lab when create_lab=true, else the created
+                nodes/networks). Best-effort; the report shows what was
+                rolled back.
         """
-        return await build_topology(client, platforms, lab_path, spec, create_lab)
+        return await build_topology(client, platforms, lab_path, spec,
+                                    create_lab, rollback_on_failure)

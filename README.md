@@ -64,9 +64,13 @@ Without Docker: `pip install .` then `eveng-mcp-server` (Python ≥ 3.12).
 | Inventory | `eveng_inventory` — vendor/OS identity, console tier, `reachable_via` per device |
 | Meta | `eveng_health` (GO/DEGRADED/CRITICAL gate) `eveng_capabilities` `eveng_api` (raw escape hatch) `skills_list` `skills_load` |
 
-`eveng_build_topology` takes a declarative spec — nodes, networks, links with **real interface names** (`spine1:et-0/0/0`) — and builds the whole lab in one call, fail-fast with a full done/failed/not-attempted report.
+`eveng_build_topology` takes a declarative spec — nodes, networks, links with **real interface names** (`spine1:et-0/0/0`) — and builds the whole lab in one call, fail-fast with a full done/failed/not-attempted report. Pass `rollback_on_failure=true` and a failed build also unwinds whatever it created.
 
-Set `EVENG_MCP_READ_ONLY=true` to register only read tools — useful for demo audiences you don't fully trust with `wipe`.
+### Risk controls
+
+- Every tool carries MCP-standard **annotations** (`readOnlyHint`, `destructiveHint`) mirroring its `read`/`write`/`destructive` tags, so clients can rank risk without knowing this server.
+- `EVENG_MCP_READ_ONLY=true` registers only read tools — unregistered beats registered-but-denied, since the model can't select what it can't see.
+- The raw `eveng_api` escape hatch is gated by **`EVENG_RAW_API`**: `read` (GET-only, the default), `full`, or `off` (not registered). Arbitrary `DELETE`/`PUT` passthrough is opt-in, never ambient.
 
 ## Integrations (all optional, config-gated)
 
@@ -106,7 +110,7 @@ Vetted runbooks the model loads on demand: `safe-lab-teardown`, `reset-lab-to-pr
 
 ## Operational notes
 
-- **Securing the endpoint.** The MCP endpoint speaks plain HTTP, and the static bearer token is the *sole* gate on every destructive capability (wipe/delete labs, config push, GitLab commits, iDRAC host power). Terminate TLS in front of it with a reverse proxy (Caddy/Traefik/nginx) and connect via `https://…/mcp`, or keep the listener on a trusted, isolated network. `MCP_HOST=127.0.0.1` binds only to loopback for proxied setups.
+- **Securing the endpoint.** The MCP endpoint speaks plain HTTP; terminate TLS in front of it with a reverse proxy (Caddy/Traefik/nginx) and connect via `https://…/mcp`, or keep the listener on a trusted, isolated network. `MCP_HOST=127.0.0.1` binds only to loopback for proxied setups. By default the static bearer token gates everything — for browser-based clients (e.g. claude.ai custom connectors) set `OIDC_CONFIG_URL` + `OIDC_CLIENT_ID` + `OIDC_CLIENT_SECRET` + `MCP_BASE_URL` and the server proxies OAuth to your IdP (Authentik, Keycloak, …) *in addition to* the bearer token; register `<MCP_BASE_URL>/auth/callback` plus your client's callback at the IdP.
 - **Consoles are exclusive.** While a tool holds a node's console, the EVE-NG web UI can't open it (and vice versa) — sessions here are deliberately open→act→close, and "busy" is a distinct error.
 - **VNC-only nodes** (Windows, some appliances) can't be text-driven — inventory reports `console.protocol: vnc` up front.
 - **Boot times vary wildly** (IOL seconds → vJunos Evolved ~7 min). `console_wait_for` uses per-template `boot_seconds` defaults.

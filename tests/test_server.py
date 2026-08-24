@@ -30,8 +30,49 @@ async def test_read_only_server_has_no_write_tools():
     assert "eveng_health" in names
     for write_tool in ("eveng_create_lab", "eveng_wipe_nodes",
                        "eveng_build_topology", "console_send_config",
-                       "console_write", "eveng_api"):
+                       "console_write"):
         assert write_tool not in names, f"write tool leaked: {write_tool}"
+    # default EVENG_RAW_API=read makes eveng_api a GET-only READ tool, so it
+    # legitimately survives read-only mode
+    assert "eveng_api" in names
+
+
+async def test_raw_api_modes():
+    from fastmcp import FastMCP
+
+    from eveng_mcp.tools import raw
+
+    # off → not registered (honest tool list)
+    mcp = FastMCP(name="t")
+    raw.register(mcp, make_config(EVENG_RAW_API="off"), client=None)
+    assert "eveng_api" not in {t.name for t in await mcp._list_tools()}
+
+    # read (default) → registered, but non-GET methods are refused
+    mcp = FastMCP(name="t")
+    raw.register(mcp, make_config(), client=None)
+    result = await mcp.call_tool(
+        "eveng_api", {"method": "DELETE", "path": "/labs/X.unl"}
+    )
+    payload = result.structured_content
+    body = payload.get("result", payload) if isinstance(payload, dict) else payload
+    assert "read-only" in body["error"]
+
+    # bad value → hard config error
+    import pytest
+
+    from eveng_mcp.config import ConfigError
+    with pytest.raises(ConfigError, match="EVENG_RAW_API"):
+        raw.register(FastMCP(name="t"), make_config(EVENG_RAW_API="yes"), client=None)
+
+
+async def test_mcp_annotations_mirror_tags():
+    mcp, _ = build_mcp(make_config())
+    tools = {t.name: t for t in await mcp._list_tools()}
+    wipe = tools["eveng_wipe_nodes"].annotations
+    assert wipe.readOnlyHint is False
+    assert wipe.destructiveHint is True
+    inv = tools["eveng_inventory"].annotations
+    assert inv.readOnlyHint is True
 
 
 def test_create_app_builds():

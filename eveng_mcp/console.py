@@ -20,6 +20,7 @@ import re
 import time
 
 from eveng_mcp.client import EvengError
+from eveng_mcp.drivers import JUNOS_EVO_SHELL_PROMPT, async_driver
 
 # telnet protocol bytes
 _IAC, _DONT, _DO, _WONT, _WILL, _SB, _SE = 255, 254, 253, 252, 251, 250, 240
@@ -164,6 +165,11 @@ class TelnetConsole:
         assert self._reader is not None, "console not open"
         rx = re.compile(pattern)
         buf = initial
+        # A seeded buffer may already satisfy the pattern (e.g. the settle-drain
+        # captured the current prompt) — say so instead of blocking for output
+        # the console has no reason to send.
+        if buf and rx.search(buf):
+            return {"matched": True, "pattern": pattern, "output": buf[-8000:]}
         deadline = time.monotonic() + timeout
         started = time.monotonic()
         while True:
@@ -197,9 +203,18 @@ class TelnetConsole:
 
 # Login-state walk for _ensure_logged_in. '(?<!Last )login:' avoids matching
 # a chunk that happens to end at Junos's "Last login: ..." banner line.
+# JUNOS_EVO_SHELL_PROMPT comes first among the shell forms: Junos Evolved's
+# '[vrf:none] root@re0:~#' would otherwise only be recognised by the generic
+# '# $' arm, which says nothing about how to get into the CLI.
 _STATE_RX = (
-    r"((?<!Last )[Ll]ogin: ?$|[Pp]assword: ?$|:~ ?# $|% $|> $|# $)"
+    r"((?<!Last )[Ll]ogin: ?$|[Pp]assword: ?$|"
+    + JUNOS_EVO_SHELL_PROMPT
+    + r"|:~ ?# $|% $|> $|# $)"
 )
+
+# Shell prompts a Junos node (classic or Evolved) can present, from which the
+# way into the operational CLI is to type `cli`.
+_JUNOS_SHELL_RX = rf"({JUNOS_EVO_SHELL_PROMPT}|:~ ?# $|% $)"
 
 
 async def _ensure_logged_in(
@@ -209,17 +224,24 @@ async def _ensure_logged_in(
     over. EVE-NG console sessions persist across telnet connections, and any
     login prompt was printed BEFORE we connected — scrapli's own telnet auth
     (which passively waits for a prompt) times out on a silent console. So:
-    nudge, walk the login/password states ourselves, and for Junos step from
-    the root shell into the cli."""
+    drain what the console replays, nudge only if that told us nothing, walk
+    the login/password states ourselves, and for Junos (classic or Evolved)
+    step from the root shell into the cli."""
     con = TelnetConsole(host, port)
     await con.open()
     try:
-        # settle: some EVE console backends drop bytes written during proxy
-        # attach; drain the replayed screen before nudging
-        await con.read(duration=0.4)
-        await con.write("\r")
+        # Settle: some EVE console backends drop bytes written during proxy
+        # attach and replay a stale screen. Drain it first, and nudge ONLY if
+        # what we drained doesn't already end at a known state — a bare newline
+        # at a `login:` prompt is answered with "Login incorrect" and a fresh
+        # prompt, which costs a round trip and pollutes the audit log.
+        seeded = await con.read(duration=0.4)
+        if not re.search(_STATE_RX, seeded):
+            seeded = ""
+            await con.write("\r")
         for _ in range(6):  # bounded state walk
-            r = await con.expect(_STATE_RX, timeout=20)
+            r = await con.expect(_STATE_RX, timeout=20, initial=seeded)
+            seeded = ""
             if not r["matched"]:
                 raise ConsoleError(
                     f"Console {host}:{port}: no recognizable prompt after nudge; "
@@ -237,7 +259,9 @@ async def _ensure_logged_in(
             if re.search(r"[Pp]assword: ?$", out):
                 await con.write((password or "") + "\r")
                 continue
-            if re.search(r"(:~ ?# |% )$", out) and platform == "juniper_junos":
+            # Junos classic (FreeBSD '%' / ':~ #') and Junos Evolved
+            # ('[vrf:none] root@re0:~#') both reach the CLI with `cli`.
+            if platform.startswith("juniper_junos") and re.search(_JUNOS_SHELL_RX, out):
                 await con.write("cli\r")  # root shell → operational cli
                 continue
             return  # at an operational prompt
@@ -247,28 +271,6 @@ async def _ensure_logged_in(
         )
     finally:
         await con.close()
-
-
-def _scrapli_conn(
-    platform: str,
-    host: str,
-    port: int,
-    timeout_ops: float = 60,
-):
-    from scrapli import AsyncScrapli
-
-    # auth_bypass always: _ensure_logged_in has already authenticated the
-    # persistent console session in a separate connection.
-    return AsyncScrapli(
-        platform=platform,
-        host=host,
-        port=port,
-        transport="asynctelnet",
-        auth_bypass=True,
-        timeout_socket=15,
-        timeout_transport=30,
-        timeout_ops=timeout_ops,
-    )
 
 
 async def driver_run(
@@ -312,7 +314,7 @@ async def _driver_run_once(
     timeout_ops: float,
 ) -> dict:
     await _ensure_logged_in(host, port, username, password, platform)
-    conn = _scrapli_conn(platform, host, port, timeout_ops)
+    conn = async_driver(platform, host, port, timeout_ops)
     results: list[dict] = []
     try:
         async with conn:

@@ -12,11 +12,24 @@ def test_exact_template_lookup(platforms: PlatformMap):
     assert info is not None
     assert info.vendor == "juniper"
     assert info.os_family == "junos"
-    assert info.scrapli_platform == "juniper_junos"
     assert info.console_tier == 1
     assert info.boot_seconds == 600
     # two-stage boot: wait for the inner Junos tty, not the shim's login:
     assert info.boot_pattern == "(ttyd0|Amnesiac)"
+
+
+def test_junos_evolved_overrides_the_family_scrapli_platform(platforms: PlatformMap):
+    """Evolved shares the junos family (show/halt/commit) but not its console
+    privilege semantics — the shell sits below the CLI. See drivers.py."""
+    for template in ("vjunosevo", "vjunosevolved", "vjunos-evolved"):
+        info = platforms.lookup(template)
+        assert info.os_family == "junos", template
+        assert info.config_commit == "commit", template
+        assert info.scrapli_platform == "juniper_junos_evo", template
+
+    # classic Junos templates keep scrapli's stock platform
+    for template in ("vjunos-switch", "vjunosswitch", "vsrx", "vmx", "vqfx"):
+        assert platforms.lookup(template).scrapli_platform == "juniper_junos", template
 
 
 def test_prefix_fallback(platforms: PlatformMap):

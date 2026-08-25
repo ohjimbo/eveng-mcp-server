@@ -14,6 +14,10 @@
 #  Interface slot mapping: `naming` is the data-plane pattern with {n};
 #  `slot` says how n maps to an EVE-NG slot index ("n" or "n+1" — templates
 #  whose slot 0 is a management port use "n+1").
+#
+#  A template entry may override any family key — `scrapli:` included. Junos
+#  Evolved templates do exactly that: same OS family, different console
+#  privilege semantics (see eveng_mcp/drivers.py).
 # ═══════════════════════════════════════════════════════════════════════════
 
 defaults:
@@ -94,14 +98,21 @@ templates:
     boot_pattern: "(ttyd0|Amnesiac)"
     boot_seconds: 600
     netbox_device_types: []
+  # Junos Evolved is Linux-based: its console lands in a Linux shell
+  # ("[vrf:none] root@re0:~#") and `cli` enters the Junos CLI. scrapli's stock
+  # juniper_junos platform models the shell as a level ABOVE the CLI and leaves
+  # it with `exit` — which on Evolved logs the console out. Same os family
+  # (junos: same show/halt/commit semantics), different scrapli platform.
   vjunosevolved:
     os: junos
+    scrapli: juniper_junos_evo
     interfaces: { naming: "et-0/0/{n}", slot: "n+1", mgmt: re0:mgmt-0 }
     boot_pattern: "(ttyd0|Amnesiac)"
     boot_seconds: 600
     netbox_device_types: [PTX10001-36MR]
   vjunos-evolved:
     os: junos
+    scrapli: juniper_junos_evo
     interfaces: { naming: "et-0/0/{n}", slot: "n+1", mgmt: re0:mgmt-0 }
     boot_pattern: "(ttyd0|Amnesiac)"
     boot_seconds: 600
@@ -125,6 +136,7 @@ templates:
     boot_seconds: 300
   vjunosevo:
     os: junos
+    scrapli: juniper_junos_evo
     interfaces: { naming: "et-0/0/{n}", slot: "n+1", mgmt: re0:mgmt-0 }
     boot_seconds: 420
   vqfx:

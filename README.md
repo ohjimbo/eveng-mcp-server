@@ -6,7 +6,7 @@ An [MCP](https://modelcontextprotocol.io) server for [EVE-NG](https://www.eve-ng
 
 Existing options wrap the EVE-NG REST API: they can draw a topology but can't *configure a device in it*. The interesting work happens on the serial console — which EVE-NG exposes for every node, every vendor, as a telnet port. This server treats the console as a first-class citizen:
 
-- **Tier 1 (driver)** — mapped platforms (Junos, EOS, IOS-XE, NX-OS…) get real semantics via [scrapli](https://github.com/carlmontanari/scrapli): prompt handling, paging off, config mode, commit.
+- **Tier 1 (driver)** — mapped platforms (Junos, Junos Evolved, EOS, IOS-XE, NX-OS…) get real semantics via [scrapli](https://github.com/carlmontanari/scrapli): prompt handling, paging off, config mode, commit.
 - **Tier 2 (expect)** — anything else with declared prompts: send/expect with regexes.
 - **Tier 3 (raw)** — read/write bytes: boot watching, bootloaders, the weird stuff.
 
@@ -103,6 +103,20 @@ EVENG_PLATFORM_MAP=/path/to/mine.yaml   # deep-merged over the shipped map
 ```
 
 Unknown templates still appear in inventory (`vendor: null`) and are listed in `unmapped_templates` — the fix is a yaml entry, not a code change.
+
+### Tier-1 platform matrix
+
+| Family | Templates | scrapli platform | Notes |
+|---|---|---|---|
+| Junos | `vjunosrouter` `vjunosswitch` `vjunos-switch` `vmx` `vsrx` `vqfx` … | `juniper_junos` (scrapli core) | FreeBSD console: `login:` → `%` shell → `cli` |
+| **Junos Evolved** | `vjunosevo` `vjunosevolved` `vjunos-evolved` | **`juniper_junos_evo`** (this repo) | Linux console: lands at `[vrf:none] root@re0:~#`, `cli` enters the CLI |
+| Arista EOS | `veos` `ceos` | `arista_eos` | |
+| Cisco IOS/IOS-XE | `iol` `vios` `viosl2` `csr1000vng` `cat8000v` | `cisco_iosxe` | |
+| Cisco NX-OS | `nxosv9k` | `cisco_nxos` | |
+
+Junos **Evolved** is Linux-based, not FreeBSD: its console starts in a Linux shell that `cli` escalates into the Junos CLI, and `exit` de-escalates back to. scrapli's stock `juniper_junos` platform models a root shell the other way round — as a level *above* the CLI, left with `exit` — so on Evolved it logs the console out in a loop and fails with `ScrapliPrivilegeError: Failed to acquire requested privilege level …`. `eveng_mcp/drivers.py` supplies an Evolved privilege graph (shell → exec → configuration) instead; `platforms.yaml` selects it with a template-level `scrapli:` override, so Evolved nodes keep the junos family's `show_config` / `halt` / `config_commit` semantics and still report `os_family: junos`.
+
+SR Linux and VyOS ship as tier 2 (declared prompts); everything else lands on tier 3.
 
 ## Skills
 

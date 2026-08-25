@@ -131,6 +131,7 @@ reusable demo: start it, wait for boot, and the whole EVPN fabric comes back.
 | L7 | Per-node stop rejected on PRO — wants `/stop/stopmode=3` | dialect auto-detect with fallback + memo (d998120) |
 | L8 | EVE's console proxy drops bytes written immediately after connect (vpcs relay) AND replays stale screen content that satisfied expect patterns — VPCS commands silently never executed while tests reported success | settle-drain ~0.5s before sending in console_expect/console_write/login-walk; discarding the replay also kills the stale-prompt false-positive (20d3f83) |
 | L9 | Transient scrapli connect/read failures under multi-node load (~2 in ~20 driver sessions) | driver_run retries once after 2s — sessions are stateless so a clean second attempt is safe |
+| L10 | Tier-1 console tools failed on **Junos Evolved** (`vjunosevo`) with `ScrapliPrivilegeError: Failed to acquire requested privilege level configuration`. Evolved's console lands in a Linux shell (`[vrf:none] root@re0:~#`); scrapli's stock `juniper_junos` `root_shell` pattern matches it but models the shell as a level *above* `exec`, so scrapli sends `exit` to "deescalate" — which on Evolved logs the console out, it auto-logs-in again, and `acquire_priv` loops until it gives up | custom `juniper_junos_evo` platform (`eveng_mcp/drivers.py`): shell is the BASE priv, `cli` escalates to `exec`, `configure` to `configuration`; selected by a template-level `scrapli:` override in platforms.yaml. Login walk also recognises the Evolved prompt and only nudges when the settle-drain shows no known state (a bare `\r` at `login:` earns "Login incorrect") |
 
 Observation (not a defect): on this EVE-NG PRO build, consoles are
 **last-connect-wins** — a new telnet connection steals the console from the
@@ -142,4 +143,5 @@ builds that refuse; sessions here are short-lived by design either way.
 - Read-only mode live (unit-tested; needs a second deployment)
 - NetBox integration live (no NetBox instance here; first live run against a demo NetBox)
 - VNC-node refusal path (no VNC nodes in scratch labs)
+- **L10 (Junos Evolved console) fix is unit-tested only** — the privilege graph and its transitions are asserted offline in `tests/test_drivers.py`; a live `console_command` / `console_send_config` run against a `vjunosevo` node still has to be done (the only Evolved nodes available at the time were in customer use)
 - EVE-NG Community edition (dialect fallbacks in place; needs a community host)

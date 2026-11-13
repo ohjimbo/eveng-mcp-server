@@ -60,11 +60,19 @@ Without Docker: `pip install .` then `eveng-mcp-server` (Python ≥ 3.12).
 | Labs | `eveng_list_labs` `eveng_get_lab` `eveng_create_lab` `eveng_delete_lab` `eveng_list_templates` `eveng_template_detail` |
 | Nodes | `eveng_list_nodes` `eveng_node_detail` `eveng_add_node` `eveng_start_nodes` `eveng_stop_nodes` `eveng_wipe_nodes` `eveng_delete_node` |
 | Topology | `eveng_list_networks` `eveng_add_network` `eveng_delete_network` `eveng_connect_interface` `eveng_connect_nodes` `eveng_get_topology` **`eveng_build_topology`** |
-| Console | `console_command` `console_get_config` `console_send_config` (tier 1) · `console_expect` (tier 2) · `console_read` `console_write` `console_wait_for` (tier 3) |
+| Console | `console_command` `console_get_config` `console_send_config` **`console_halt`** (tier 1) · `console_expect` (tier 2) · `console_read` `console_write` `console_wait_for` (tier 3) · **`eveng_halt_nodes`** (whole lab, one call) |
 | Inventory | `eveng_inventory` — vendor/OS identity, console tier, `reachable_via` per device |
 | Meta | `eveng_health` (GO/DEGRADED/CRITICAL gate) `eveng_capabilities` `eveng_api` (raw escape hatch) `skills_list` `skills_load` |
 
 `eveng_build_topology` takes a declarative spec — nodes, networks, links with **real interface names** (`spine1:et-0/0/0`) — and builds the whole lab in one call, fail-fast with a full done/failed/not-attempted report. Pass `rollback_on_failure=true` and a failed build also unwinds whatever it created.
+
+### Time budget, verified captures, graceful halts
+
+MCP clients give a tool call about 60 seconds and then walk away — but a naive server keeps running it, and the next call then fights the first for the same consoles. Every multi-node tool here (`eveng_backup_configs`, `eveng_halt_nodes`) fans out concurrently (`CONSOLE_CONCURRENCY`, default 6) and stops at a wall-clock budget (`TOOL_TIME_BUDGET`, default 50 s), returning what finished plus `incomplete: true` and the `pending` nodes — call again for the rest, nothing is left running.
+
+Config captures (`console_get_config`, the backup) are anchored on the node's exact prompt, not a vendor regex, and verified against the device's own line count where the platform has one (Junos `| count`). A truncated capture is reported as `verified: false` and never committed over good history.
+
+`console_halt` / `eveng_halt_nodes` run the platform's `halt` command from `platforms.yaml` (Junos `request system halt`, vSRX `request system power-off`, VyOS/Linux `poweroff`), answer the confirm prompt, wait for the halt marker and report `halted` true/false. They refuse to type into a console that already shows a halted OS — on Junos/FreeBSD a keypress reboots it. Nodes without a `halt` mapping (vpcs, EOS, IOS, VNC-only appliances) are listed as `skipped`; hard-stop those with `eveng_stop_nodes`.
 
 ### Risk controls
 
@@ -77,7 +85,7 @@ Without Docker: `pip install .` then `eveng-mcp-server` (Python ≥ 3.12).
 | Integration | Enables | Config |
 |---|---|---|
 | `idrac` | Power on/off the EVE-NG bare-metal host | `IDRAC_HOST/USER/PASS` |
-| `gitlab_backup` | One-commit backup of running node configs (via console) | `GITLAB_URL`, `GITLAB_TOKEN`, `GITLAB_BACKUP_PROJECT` |
+| `gitlab_backup` | One-commit backup of running node configs (via console, concurrent, line-count verified) | `GITLAB_URL`, `GITLAB_TOKEN`, `GITLAB_BACKUP_PROJECT` |
 | `junos_mcp` | Register lab Junos devices with a junos-mcp-server instance (devices.json + hot reload) | `JMCP_URL` (+ `JMCP_DEVICE_USER/PASS`, docker.sock mount) |
 | `netbox` | **Preview/build labs from a NetBox site**, publish lab devices, drift diff | `NETBOX_URL`, `NETBOX_TOKEN` |
 
@@ -96,7 +104,7 @@ netbox_diff_lab("/HQ.unl", site="hq")   # prove the twin still matches
 
 ## platforms.yaml — the mapping spine
 
-One file maps EVE-NG template names → vendor/OS, scrapli platform, interface naming (`ge-0/0/{n}` ↔ slot), boot times, console prompts for tier-2, and NetBox device types. Ship defaults cover Junos/EOS/IOS/NX-OS/SR Linux/VyOS; override or extend with your own file:
+One file maps EVE-NG template names → vendor/OS, scrapli platform, interface naming (`ge-0/0/{n}` ↔ slot), boot times, console prompts for tier-2, capture/halt commands (`show_config`, `show_config_count`, `halt`, `halt_confirm`, `halt_done`), and NetBox device types. Ship defaults cover Junos/EOS/IOS/NX-OS/SR Linux/VyOS; override or extend with your own file:
 
 ```bash
 EVENG_PLATFORM_MAP=/path/to/mine.yaml   # deep-merged over the shipped map

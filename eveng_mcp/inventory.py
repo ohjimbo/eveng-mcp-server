@@ -37,7 +37,13 @@ class PlatformInfo:
     scrapli_platform: str | None = None
     console_block: dict = field(default_factory=dict)
     show_config: str | None = None
+    show_config_count: str | None = None  # emits the expected line count (verification)
+    config_line_regex: str | None = None  # which captured lines count toward it
+    paging_off: str | None = None  # command to disable paging before a capture
     halt: str | None = None
+    halt_confirm: str | None = None  # regex of the halt confirm prompt (if any)
+    halt_answer: str | None = None  # what to type at it (default "yes")
+    halt_done: str | None = None  # regex meaning "the OS has halted"
     config_commit: str | None = None
     boot_seconds: int = 60
     boot_pattern: str | None = None  # console regex meaning "actually usable"
@@ -120,7 +126,13 @@ class PlatformMap:
             scrapli_platform=merged.get("scrapli"),
             console_block=merged.get("console", {}) or {},
             show_config=merged.get("show_config"),
+            show_config_count=merged.get("show_config_count"),
+            config_line_regex=merged.get("config_line_regex"),
+            paging_off=merged.get("paging_off"),
             halt=merged.get("halt"),
+            halt_confirm=merged.get("halt_confirm"),
+            halt_answer=merged.get("halt_answer"),
+            halt_done=merged.get("halt_done"),
             config_commit=merged.get("config_commit"),
             boot_seconds=int(
                 merged.get("boot_seconds", self.defaults.get("boot_seconds", 60))

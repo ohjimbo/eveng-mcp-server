@@ -11,6 +11,17 @@
 #    tier 2 — template/family has `console` block → generic expect
 #    tier 3 — everything else                     → raw read/write only
 #
+#  Capture / halt keys (used by console_get_config, eveng_backup_configs,
+#  console_halt, eveng_halt_nodes — prompt-anchored, no scrapli):
+#    show_config        full config dump, paging already disabled in the command
+#    show_config_count  command whose output contains the expected line count;
+#                       a capture whose `config_line_regex` lines != count is
+#                       reported as unverified and never committed
+#    paging_off         sent once before capturing (platforms without `| no-more`)
+#    halt               graceful halt command; halt_confirm (regex) + halt_answer
+#                       handle the "[yes,no]" prompt; halt_done (regex) is the
+#                       marker that the OS has stopped (default: common markers)
+#
 #  Interface slot mapping: `naming` is the data-plane pattern with {n};
 #  `slot` says how n maps to an EVE-NG slot index ("n" or "n+1" — templates
 #  whose slot 0 is a management port use "n+1").
@@ -23,24 +34,34 @@ os_families:
   junos:
     vendor: juniper
     scrapli: juniper_junos
-    show_config: "show configuration | display set"
+    show_config: "show configuration | display set | no-more"
+    show_config_count: "show configuration | display set | count"   # "Count: N lines"
+    config_line_regex: '^set '
     halt: "request system halt"
+    halt_confirm: '\[yes,no\]'
+    halt_answer: "yes"
+    # vJunos prints "*** FINAL System shutdown"; FreeBSD then "The operating
+    # system has halted. Please press any key to reboot." — NEVER press one.
+    halt_done: '(FINAL System shutdown|operating system has halted|Powering system off)'
     config_commit: "commit"   # junos candidate config needs an explicit commit
     netbox_platform: junos
   eos:
     vendor: arista
     scrapli: arista_eos
     show_config: "show running-config"
+    paging_off: "terminal length 0"
     netbox_platform: eos
   ios:
     vendor: cisco
     scrapli: cisco_iosxe
     show_config: "show running-config"
+    paging_off: "terminal length 0"
     netbox_platform: ios
   nxos:
     vendor: cisco
     scrapli: cisco_nxos
     show_config: "show running-config"
+    paging_off: "terminal length 0"
     netbox_platform: nxos
   srlinux:
     vendor: nokia
@@ -59,6 +80,7 @@ os_families:
         config: '# $'
     show_config: "show configuration commands"
     halt: "poweroff now"
+    halt_done: '(reboot: Power down|System halted|Power down)'
     netbox_platform: vyos
   linux:
     vendor: generic
@@ -66,6 +88,7 @@ os_families:
       prompts:
         operational: '[#$] $'
     halt: "poweroff"
+    halt_done: '(reboot: Power down|System halted|Power down)'
 
 templates:
   # ── Juniper ──────────────────────────────────────────────────────────────
@@ -118,11 +141,13 @@ templates:
     os: junos
     interfaces: { naming: "ge-0/0/{n}", slot: "n+1", mgmt: fxp0 }
     boot_seconds: 300
+    halt: "request system power-off"   # "request system halt" is not valid on vSRX
     netbox_device_types: [SRX340, SRX1500, SRX4600]
   vsrxng:
     os: junos
     interfaces: { naming: "ge-0/0/{n}", slot: "n+1", mgmt: fxp0 }
     boot_seconds: 300
+    halt: "request system power-off"   # "request system halt" is not valid on vSRX
   vjunosevo:
     os: junos
     interfaces: { naming: "et-0/0/{n}", slot: "n+1", mgmt: re0:mgmt-0 }
@@ -185,6 +210,7 @@ templates:
     os: linux
     eve_type: vpcs
     boot_seconds: 10
+    halt: ~   # VPCS is stateless and has no poweroff — hard stop is fine
 
 # Longest-prefix fallback for template names not listed above
 # (custom image names like "vjunosevolved-23.2R1" resolve via prefix).

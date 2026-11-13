@@ -3,17 +3,24 @@
 Pulls each running, driver-capable node's config over its console and commits
 the lot as ONE commit: <lab-name>/configs/<node>.conf on the project's
 default branch.
+
+Captures run concurrently and stop at the tool's time budget (see
+tools/_common.py): a client that gives up at 60s must not leave a zombie
+backup fighting the next call for the same consoles. Every capture is
+prompt-anchored and, where the platform can count lines, verified — a
+truncated config is reported, never committed over good history.
 """
 
 from __future__ import annotations
 
+import asyncio
 from urllib.parse import quote
 
 import httpx
 
-from eveng_mcp.console import ConsoleError, driver_run
+from eveng_mcp.console import ConsoleError, capture_config
 from eveng_mcp.inventory import build_inventory
-from eveng_mcp.tools._common import make_tool
+from eveng_mcp.tools._common import fanout_limits, gather_bounded, make_tool
 
 REQUIRES = ("GITLAB_URL", "GITLAB_TOKEN", "GITLAB_BACKUP_PROJECT")
 SUMMARY = "Back up running node configs (via console) to a GitLab project"
@@ -38,10 +45,13 @@ def register(mcp, cfg, client, platforms) -> None:
         lab_path: str = "", username: str = "", password: str = ""
     ) -> dict:
         """Back up running node configurations to GitLab. Consoles into every
-        running tier-1 node, captures its config (platform show_config
-        command), and commits everything as one commit under
-        <lab-name>/configs/<node>.conf. Nodes without a driver or without a
-        show_config mapping are reported, not silently skipped.
+        running tier-1 node concurrently, captures its config (platform
+        show_config, prompt-anchored, line-count verified where the platform
+        supports it) and commits everything as one commit under
+        <lab-name>/configs/<node>.conf. Truncated/unverifiable captures and
+        nodes without a driver are listed in `skipped`, not committed. If
+        `incomplete` is true the time budget ran out before every node was
+        captured — call again; the committed files are already safe.
 
         Args:
             lab_path: one lab like '/MyLab.unl' (empty = ALL labs with
@@ -54,7 +64,7 @@ def register(mcp, cfg, client, platforms) -> None:
         inv = await build_inventory(
             client, platforms, lab_path=lab_path or None, running_only=True
         )
-        captured: list[dict] = []
+        todo: list[tuple[dict, object]] = []
         skipped: list[dict] = []
 
         for dev in inv["devices"]:
@@ -70,31 +80,47 @@ def register(mcp, cfg, client, platforms) -> None:
                 skipped.append({"node": dev["name"], "lab": dev["lab_path"],
                                 "reason": "no telnet console"})
                 continue
-            try:
-                result = await driver_run(
-                    info.scrapli_platform,
-                    dev["console"]["host"], dev["console"]["port"],
-                    commands=[info.show_config], username=user, password=pwd,
-                )
-                out = result["results"][0]
-                if out.get("failed"):
-                    skipped.append({"node": dev["name"], "lab": dev["lab_path"],
-                                    "reason": f"command failed: {out.get('output', '')[:200]}"})
-                    continue
-                lab_name = dev["lab_path"].strip("/").removesuffix(".unl").replace("/", "_")
-                captured.append({
-                    "node": dev["name"],
-                    "node_id": dev["node_id"],
-                    "lab": dev["lab_path"],
-                    "file_path": f"{lab_name}/configs/{dev['name']}.conf",
-                    "content": out.get("output", ""),
+            todo.append((dev, info))
+
+        async def one(item):
+            dev, info = item
+            return await capture_config(
+                info, dev["console"]["host"], dev["console"]["port"], user, pwd,
+            )
+
+        conc, budget = fanout_limits(cfg)
+        # leave headroom for the GitLab round-trips after the captures
+        finished, unfinished = await gather_bounded(todo, one, conc, max(5.0, budget - 8))
+
+        captured: list[dict] = []
+        for (dev, _info), res in finished:
+            if isinstance(res, BaseException):
+                reason = str(res) if isinstance(res, ConsoleError) \
+                    else f"{type(res).__name__}: {res}"
+                skipped.append({"node": dev["name"], "lab": dev["lab_path"], "reason": reason})
+                continue
+            if res["verified"] is False:
+                skipped.append({
+                    "node": dev["name"], "lab": dev["lab_path"],
+                    "reason": f"capture truncated: {res['lines']} lines, device reports "
+                              f"{res['expected_lines']} — NOT committed",
                 })
-            except ConsoleError as e:
-                skipped.append({"node": dev["name"], "lab": dev["lab_path"],
-                                "reason": str(e)})
+                continue
+            lab_name = dev["lab_path"].strip("/").removesuffix(".unl").replace("/", "_")
+            captured.append({
+                "node": dev["name"],
+                "node_id": dev["node_id"],
+                "lab": dev["lab_path"],
+                "file_path": f"{lab_name}/configs/{dev['name']}.conf",
+                "content": res["config"] + "\n",
+                "lines": res["lines"],
+                "verified": res["verified"],
+            })
+        pending = [{"node": dev["name"], "lab": dev["lab_path"]} for dev, _ in unfinished]
 
         if not captured:
-            return {"committed": 0, "skipped": skipped,
+            return {"committed": 0, "skipped": skipped, "pending": pending,
+                    "incomplete": bool(pending),
                     "error": "No configs captured — nothing to commit"}
 
         # EVE-NG doesn't enforce unique node names; duplicate paths in one
@@ -116,17 +142,18 @@ def register(mcp, cfg, client, platforms) -> None:
                              f"{proj.text[:200]}"}
         branch = proj.json().get("default_branch") or "main"
 
-        actions = []
-        for item in captured:
-            head = await _gl(
-                "GET",
-                f"/repository/files/{quote(item['file_path'], safe='')}?ref={branch}",
-            )
-            actions.append({
+        heads = await asyncio.gather(*(
+            _gl("GET", f"/repository/files/{quote(item['file_path'], safe='')}?ref={branch}")
+            for item in captured
+        ))
+        actions = [
+            {
                 "action": "update" if head.status_code == 200 else "create",
                 "file_path": item["file_path"],
                 "content": item["content"],
-            })
+            }
+            for item, head in zip(captured, heads, strict=True)
+        ]
 
         commit = await _gl("POST", "/repository/commits", {
             "branch": branch,
@@ -144,6 +171,9 @@ def register(mcp, cfg, client, platforms) -> None:
             "committed": len(actions),
             "commit_id": commit.json().get("short_id"),
             "branch": branch,
-            "files": [c["file_path"] for c in captured],
+            "files": [{"path": c["file_path"], "lines": c["lines"],
+                       "verified": c["verified"]} for c in captured],
             "skipped": skipped,
+            "pending": pending,
+            "incomplete": bool(pending),
         }

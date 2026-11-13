@@ -11,9 +11,15 @@ import time
 
 from eveng_mcp.client import EvengClient, EvengError
 from eveng_mcp.config import Config
-from eveng_mcp.console import TelnetConsole, driver_run
-from eveng_mcp.inventory import PlatformMap, node_to_device
-from eveng_mcp.tools._common import make_tool
+from eveng_mcp.console import (
+    ConsoleError,
+    TelnetConsole,
+    capture_config,
+    driver_run,
+    graceful_halt,
+)
+from eveng_mcp.inventory import PlatformMap, build_inventory, node_to_device
+from eveng_mcp.tools._common import fanout_limits, gather_bounded, make_tool
 
 
 async def _find_device(
@@ -71,7 +77,8 @@ def register(mcp, cfg: Config, client: EvengClient, platforms: PlatformMap) -> N
         password: str = "",
     ) -> dict:
         """Run one operational command on a node via its console, with proper
-        prompt/paging handling (tier-1, driver-backed templates only).
+        prompt/paging handling (tier-1, driver-backed templates only). Not for
+        halt/reboot commands — those never return a prompt; use console_halt.
 
         Args:
             lab_path: e.g. '/MyLab.unl'.
@@ -92,7 +99,10 @@ def register(mcp, cfg: Config, client: EvengClient, platforms: PlatformMap) -> N
         lab_path: str, node: str, username: str = "", password: str = ""
     ) -> dict:
         """Fetch a node's running configuration via console (tier-1 templates;
-        uses the platform's show_config command from platforms.yaml).
+        uses the platform's show_config command from platforms.yaml). The
+        capture is anchored on the node's exact prompt and, where the platform
+        can count lines (Junos), verified against that count — `verified` is
+        False when the capture is truncated, so check it before trusting it.
 
         Args:
             lab_path: e.g. '/MyLab.unl'.
@@ -100,20 +110,111 @@ def register(mcp, cfg: Config, client: EvengClient, platforms: PlatformMap) -> N
             username/password: console login (default: CONSOLE_USER/PASS env).
         """
         dev = await _find_device(client, platforms, lab_path, node)
-        platform = _require_tier1(dev)
+        _require_tier1(dev)
         info = platforms.lookup(dev["template"])
         if not info or not info.show_config:
             raise EvengError(
                 f"No show_config command mapped for template {dev['template']!r}"
             )
         user, pwd = _creds(username, password)
-        result = await driver_run(
-            platform, dev["console"]["host"], dev["console"]["port"],
-            commands=[info.show_config], username=user, password=pwd,
+        result = await capture_config(
+            info, dev["console"]["host"], dev["console"]["port"], user, pwd,
         )
-        out = result["results"][0] if result.get("results") else {}
-        return {"node": dev["name"], "command": info.show_config,
-                "failed": out.get("failed"), "config": out.get("output", "")}
+        return {"node": dev["name"], "command": info.show_config, **result}
+
+    @tool(write=True)
+    async def console_halt(
+        lab_path: str, node: str, wait: float = 30,
+        username: str = "", password: str = "",
+    ) -> dict:
+        """Gracefully halt ONE node over its console: sends the platform's halt
+        command (platforms.yaml `halt`, e.g. Junos 'request system halt', vSRX
+        'request system power-off'), answers the confirm prompt, and waits for
+        the halt marker. Returns halted=true/false — nothing is assumed. Sends
+        nothing if the console already shows a halted OS (a keypress would
+        reboot it). Follow with eveng_stop_nodes to release the QEMU process.
+
+        Args:
+            lab_path: e.g. '/MyLab.unl'.
+            node: node name or numeric id.
+            wait: seconds to wait for the halt marker after confirming.
+            username/password: console login (default: CONSOLE_USER/PASS env).
+        """
+        dev = await _find_device(client, platforms, lab_path, node)
+        info = platforms.lookup(dev["template"])
+        if not info or not info.halt:
+            raise EvengError(
+                f"Template {dev['template']!r} has no graceful halt mapped — hard-stop "
+                "it with eveng_stop_nodes (fine for stateless nodes), or add `halt` "
+                "for the template in platforms.yaml"
+            )
+        user, pwd = _creds(username, password)
+        result = await graceful_halt(
+            info, dev["console"]["host"], dev["console"]["port"], user, pwd, wait=wait,
+        )
+        return {"node": dev["name"], "command": info.halt, **result}
+
+    @tool(write=True)
+    async def eveng_halt_nodes(
+        lab_path: str, wait: float = 30, username: str = "", password: str = ""
+    ) -> dict:
+        """Gracefully halt every running node in a lab that has a halt command
+        mapped, concurrently, within one tool call's time budget. Nodes
+        without a halt mapping or without a telnet console are listed under
+        `skipped` (hard-stop those). If `incomplete` is true the budget ran
+        out — call again for the remaining nodes. Then eveng_stop_nodes.
+
+        Args:
+            lab_path: e.g. '/MyLab.unl'.
+            wait: seconds to wait per node for the halt marker.
+            username/password: console login (default: CONSOLE_USER/PASS env).
+        """
+        user, pwd = _creds(username, password)
+        inv = await build_inventory(client, platforms, lab_path=lab_path, running_only=True)
+        todo, skipped = [], []
+        for dev in inv["devices"]:
+            info = platforms.lookup(dev["template"])
+            if not info or not info.halt:
+                skipped.append({"node": dev["name"],
+                                "reason": "no graceful halt mapped — hard-stop is fine"})
+            elif dev["console"]["protocol"] != "telnet" or not dev["console"]["port"]:
+                skipped.append({"node": dev["name"],
+                                "reason": f"no telnet console ({dev['console']['protocol']})"})
+            else:
+                todo.append((dev, info))
+
+        async def one(item):
+            dev, info = item
+            return await graceful_halt(
+                info, dev["console"]["host"], dev["console"]["port"], user, pwd, wait=wait,
+            )
+
+        conc, budget = fanout_limits(cfg)
+        finished, unfinished = await gather_bounded(todo, one, conc, budget)
+        halted, failed = [], []
+        for (dev, info), res in finished:
+            if isinstance(res, ConsoleError):
+                failed.append({"node": dev["name"], "reason": str(res)})
+            elif isinstance(res, BaseException):
+                failed.append({"node": dev["name"],
+                               "reason": f"{type(res).__name__}: {res}"})
+            elif res.get("halted"):
+                halted.append({"node": dev["name"], "command": info.halt,
+                               **{k: v for k, v in res.items() if k != "output"}})
+            else:
+                failed.append({"node": dev["name"],
+                               "reason": "no halt marker seen — tail: "
+                                         + res.get("output", "")[-200:]})
+        return {
+            "lab": lab_path,
+            "halted": halted,
+            "failed": failed,
+            "skipped": skipped,
+            "pending": [dev["name"] for dev, _ in unfinished],
+            "incomplete": bool(unfinished),
+            "hint": ("time budget reached — call eveng_halt_nodes again for `pending`"
+                     if unfinished else "now eveng_stop_nodes(lab_path) to release QEMU"),
+        }
 
     @tool(write=True)
     async def console_send_config(

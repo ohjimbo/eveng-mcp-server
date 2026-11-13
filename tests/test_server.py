@@ -14,6 +14,7 @@ async def test_build_mcp_registers_core_tools():
         "eveng_list_labs", "eveng_create_lab", "eveng_build_topology",
         "eveng_inventory", "eveng_health", "eveng_capabilities",
         "console_command", "console_expect", "console_wait_for",
+        "console_get_config", "console_halt", "eveng_halt_nodes",
         "skills_list", "skills_load", "eveng_api",
     ):
         assert expected in names, f"missing tool: {expected}"
@@ -30,7 +31,7 @@ async def test_read_only_server_has_no_write_tools():
     assert "eveng_health" in names
     for write_tool in ("eveng_create_lab", "eveng_wipe_nodes",
                        "eveng_build_topology", "console_send_config",
-                       "console_write"):
+                       "console_write", "console_halt", "eveng_halt_nodes"):
         assert write_tool not in names, f"write tool leaked: {write_tool}"
     # default EVENG_RAW_API=read makes eveng_api a GET-only READ tool, so it
     # legitimately survives read-only mode
